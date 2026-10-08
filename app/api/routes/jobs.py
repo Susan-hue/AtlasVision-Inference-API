@@ -14,15 +14,17 @@ from testatlasvision import UnsupportedLanguageError, normalize_language
 
 from app.api.dependencies import get_redis, get_settings
 from app.api.errors import ApiError
+from app.api.limits import ReadPrincipal, SubmitPrincipal
 from app.api.routes.sessions import valid_session_id
 from app.core.config import ApiSettings
 from app.core.heartbeat import accepts_jobs, model_state, read_heartbeats
 from app.core.images import ImageRejected, check_image
 from app.core.jobs import as_seen_now, create_job, delete_job, load_job, utcnow
-from app.core.queue import CHAT_JOB, enqueue
-from app.core.schemas import ChatOutput, ChatParams, JobError, JobRecord, JobStatus, Lang
+from app.core.queue import CHAT_JOB, enqueue, queue_depth
+from app.core.schemas import ChatOutput, ChatParams, JobError, JobRecord, JobStatus, Lang, Owner
 from app.core.sessions import (
     acquire_lock,
+    load_session,
     queued_lock_ttl,
     release_lock,
     replace_lock,
@@ -54,6 +56,7 @@ class JobView(BaseModel):
 
 @router.post("/chat", status_code=202, response_model=JobAccepted)
 async def submit_chat(
+    principal: SubmitPrincipal,
     response: Response,
     redis: RedisDep,
     settings: SettingsDep,
@@ -75,17 +78,20 @@ async def submit_chat(
     if session_id is not None:
         valid_session_id(session_id)
     await _require_worker(redis, settings)
+    if await queue_depth(redis) >= settings.max_queue_depth:
+        raise ApiError.from_code("queue_full", headers={"Retry-After": "30"})
     data = await _read_image(image, settings)
 
     record = JobRecord(
         job_id=uuid.uuid4().hex,
         status=JobStatus.QUEUED,
+        owner=principal.owner,
         session_id=session_id,
         created_at=utcnow(),
         params=params,
     )
     if session_id is not None:
-        await _lock_session(redis, settings, session_id, record.job_id)
+        await _lock_session(redis, settings, principal.owner, session_id, record.job_id)
     try:
         await create_job(redis, record, data, settings)
         await enqueue(redis, CHAT_JOB, record.job_id, expires=settings.image_ttl)
@@ -100,9 +106,12 @@ async def submit_chat(
 
 
 @router.get("/{job_id}", response_model=JobView)
-async def get_job(job_id: str, redis: RedisDep, settings: SettingsDep) -> JobView:
+async def get_job(
+    job_id: str, principal: ReadPrincipal, redis: RedisDep, settings: SettingsDep
+) -> JobView:
     record = await load_job(redis, job_id) if JOB_ID.fullmatch(job_id) else None
-    if record is None:
+    # Someone else's job is reported exactly like a missing one.
+    if record is None or record.owner != principal.owner:
         raise ApiError.from_code("job_not_found")
     record = as_seen_now(record, settings, utcnow())
     return JobView.model_validate(record, from_attributes=True)
@@ -130,9 +139,13 @@ def _language(value: str, field: str) -> Lang:
         ) from None
 
 
-async def _lock_session(redis: Redis, settings: ApiSettings, session_id: str, job_id: str) -> None:
-    if not await touch_session(redis, session_id, settings.session_ttl):
+async def _lock_session(
+    redis: Redis, settings: ApiSettings, owner: Owner, session_id: str, job_id: str
+) -> None:
+    conversation = await load_session(redis, session_id)
+    if conversation is None or conversation.owner != owner:
         raise ApiError.from_code("session_not_found")
+    await touch_session(redis, session_id, settings.session_ttl)
     ttl = queued_lock_ttl(settings)
     holder = await acquire_lock(redis, session_id, job_id, ttl)
     if holder is None:
