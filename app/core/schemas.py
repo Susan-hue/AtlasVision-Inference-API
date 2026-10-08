@@ -46,7 +46,6 @@ class JobError(BaseModel):
 
 class JobRecord(BaseModel):
     job_id: str
-    kind: Literal["chat"] = "chat"
     status: JobStatus
     owner: Owner | None = None
     session_id: str | None = None
@@ -71,9 +70,20 @@ class TurnView(TurnRecord):
 
 
 class WorkerState(StrEnum):
+    """What one worker reports about itself in its heartbeat."""
+
     LOADING = "loading"
     READY = "ready"
     FAILED = "failed"
+
+
+class ModelState(StrEnum):
+    """What the API concludes from all workers' heartbeats."""
+
+    READY = "ready"
+    LOADING = "loading"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
 
 
 class Heartbeat(BaseModel):
@@ -81,4 +91,5 @@ class Heartbeat(BaseModel):
     state: WorkerState
     updated_at: float
     model: dict[str, Any] | None = None
+    # Not returned by the API; kept so anyone inspecting Redis can see why a load failed.
     error_code: str | None = None

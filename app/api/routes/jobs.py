@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 import uuid
 from datetime import datetime
@@ -15,15 +14,15 @@ from testatlasvision import UnsupportedLanguageError, normalize_language
 from app.api.dependencies import get_redis, get_settings
 from app.api.errors import ApiError
 from app.api.limits import ReadPrincipal, SubmitPrincipal
-from app.api.routes.sessions import valid_session_id
 from app.core.config import ApiSettings
 from app.core.heartbeat import accepts_jobs, model_state, read_heartbeats
 from app.core.images import ImageRejected, check_image
-from app.core.jobs import as_seen_now, create_job, delete_job, load_job, utcnow
+from app.core.jobs import as_seen_now, create_job, delete_job, is_job_id, load_job, utcnow
 from app.core.queue import CHAT_JOB, enqueue, queue_depth
 from app.core.schemas import ChatOutput, ChatParams, JobError, JobRecord, JobStatus, Lang, Owner
 from app.core.sessions import (
     acquire_lock,
+    is_session_id,
     load_session,
     queued_lock_ttl,
     release_lock,
@@ -32,8 +31,6 @@ from app.core.sessions import (
 )
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
-
-JOB_ID = re.compile(r"[0-9a-f]{32}")
 
 RedisDep = Annotated[Redis, Depends(get_redis)]
 SettingsDep = Annotated[ApiSettings, Depends(get_settings)]
@@ -61,9 +58,10 @@ async def submit_chat(
     redis: RedisDep,
     settings: SettingsDep,
     image: Annotated[UploadFile, File()],
-    question: Annotated[str, Form()],
     lang: Annotated[str, Form()],
     question_lang: Annotated[str, Form()],
+    # A default, so an empty or missing question gets invalid_question, not invalid_request.
+    question: Annotated[str, Form()] = "",
     session_id: Annotated[str | None, Form()] = None,
 ) -> JobAccepted:
     params = ChatParams(
@@ -73,13 +71,13 @@ async def submit_chat(
         max_new_tokens=settings.max_new_tokens,
     )
     if params.question_lang not in ("en", params.lang):
-        raise ApiError(422, "invalid_question_lang", 'question_lang must be "en" or equal to lang.')
+        raise ApiError("invalid_question_lang")
     session_id = (session_id or "").strip() or None
-    if session_id is not None:
-        valid_session_id(session_id)
+    if session_id is not None and not is_session_id(session_id):
+        raise ApiError("session_not_found")
     await _require_worker(redis, settings)
     if await queue_depth(redis) >= settings.max_queue_depth:
-        raise ApiError.from_code("queue_full", headers={"Retry-After": "30"})
+        raise ApiError("queue_full", headers={"Retry-After": str(settings.retry_after_queue_full)})
     data = await _read_image(image, settings)
 
     record = JobRecord(
@@ -109,10 +107,10 @@ async def submit_chat(
 async def get_job(
     job_id: str, principal: ReadPrincipal, redis: RedisDep, settings: SettingsDep
 ) -> JobView:
-    record = await load_job(redis, job_id) if JOB_ID.fullmatch(job_id) else None
+    record = await load_job(redis, job_id) if is_job_id(job_id) else None
     # Someone else's job is reported exactly like a missing one.
     if record is None or record.owner != principal.owner:
-        raise ApiError.from_code("job_not_found")
+        raise ApiError("job_not_found")
     record = as_seen_now(record, settings, utcnow())
     return JobView.model_validate(record, from_attributes=True)
 
@@ -120,13 +118,9 @@ async def get_job(
 def _question(question: str, settings: ApiSettings) -> str:
     question = question.strip()
     if not question:
-        raise ApiError(422, "invalid_question", "question must not be empty.")
+        raise ApiError("invalid_question")
     if len(question) > settings.max_question_chars:
-        raise ApiError(
-            422,
-            "question_too_long",
-            f"question must be at most {settings.max_question_chars} characters.",
-        )
+        raise ApiError("question_too_long", extra={"max_length": settings.max_question_chars})
     return question
 
 
@@ -134,9 +128,7 @@ def _language(value: str, field: str) -> Lang:
     try:
         return normalize_language(value)  # type: ignore[return-value]
     except UnsupportedLanguageError:
-        raise ApiError(
-            422, "unsupported_language", f"{field} must be one of en, ig, yo, ha."
-        ) from None
+        raise ApiError("unsupported_language", extra={"field": field}) from None
 
 
 async def _lock_session(
@@ -144,7 +136,7 @@ async def _lock_session(
 ) -> None:
     conversation = await load_session(redis, session_id)
     if conversation is None or conversation.owner != owner:
-        raise ApiError.from_code("session_not_found")
+        raise ApiError("session_not_found")
     await touch_session(redis, session_id, settings.session_ttl)
     ttl = queued_lock_ttl(settings)
     holder = await acquire_lock(redis, session_id, job_id, ttl)
@@ -156,7 +148,7 @@ async def _lock_session(
         redis, session_id, holder, job_id, ttl
     ):
         return
-    raise ApiError.from_code("session_busy", extra={"job_id": holder})
+    raise ApiError("session_busy", extra={"job_id": holder})
 
 
 async def _cannot_finish(redis: Redis, settings: ApiSettings, job_id: str) -> bool:
@@ -170,18 +162,16 @@ async def _require_worker(redis: Redis, settings: ApiSettings) -> None:
     beats = await read_heartbeats(redis)
     state = model_state(beats, now=time.time(), stale_after=settings.heartbeat_stale_after)
     if not accepts_jobs(state):
-        raise ApiError.from_code("model_unavailable", headers={"Retry-After": "30"})
+        retry_after = str(settings.retry_after_model_unavailable)
+        raise ApiError("model_unavailable", headers={"Retry-After": retry_after})
 
 
 async def _read_image(image: UploadFile, settings: ApiSettings) -> bytes:
     data = await image.read(settings.max_image_bytes + 1)
     if len(data) > settings.max_image_bytes:
-        raise ApiError(
-            413, "image_too_large", f"Image must be at most {settings.max_image_mb:g} MB."
-        )
+        raise ApiError("request_too_large")
     try:
         await asyncio.to_thread(check_image, data, image.content_type)
     except ImageRejected as exc:
-        status = 415 if exc.code == "unsupported_media_type" else 422
-        raise ApiError(status, exc.code, exc.message) from None
+        raise ApiError(exc.code) from None
     return data

@@ -72,8 +72,8 @@ async def authenticate(
         store: KeyStore = request.app.state.key_store
         kid = await store.lookup(api_key)
     if kid is None:
-        raise ApiError.from_code("unauthorized", headers={"WWW-Authenticate": "ApiKey"})
+        raise ApiError("unauthorized", headers={"WWW-Authenticate": "ApiKey"})
     # X-Client-Id is only trusted once the key is valid: it comes from our own server route.
     if client_id is not None and not CLIENT_ID.fullmatch(client_id):
-        raise ApiError.from_code("invalid_client_id")
+        raise ApiError("invalid_client_id")
     return Principal(key_id=kid, client_id=client_id)

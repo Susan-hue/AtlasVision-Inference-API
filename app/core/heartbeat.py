@@ -1,25 +1,17 @@
 from __future__ import annotations
 
 import logging
-from enum import StrEnum
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
 
-from app.core.schemas import Heartbeat, WorkerState
+from app.core.schemas import Heartbeat, ModelState, WorkerState
 
 logger = logging.getLogger(__name__)
 
 # One hash field per worker. A hash (not one key per worker) lets readers fetch every
 # worker in one HGETALL instead of SCANning the keyspace.
 WORKERS_KEY = "atlas:workers"
-
-
-class ModelState(StrEnum):
-    READY = "ready"
-    LOADING = "loading"
-    FAILED = "failed"
-    UNAVAILABLE = "unavailable"
 
 
 async def read_heartbeats(redis: Redis) -> list[Heartbeat]:

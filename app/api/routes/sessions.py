@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
@@ -16,14 +15,13 @@ from app.core.sessions import (
     Conversation,
     create_session,
     delete_session,
+    is_session_id,
     load_session,
     lock_holder,
     touch_session,
 )
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
-
-SESSION_ID = re.compile(r"[0-9a-f]{32}")
 
 RedisDep = Annotated[Redis, Depends(get_redis)]
 SettingsDep = Annotated[ApiSettings, Depends(get_settings)]
@@ -39,17 +37,11 @@ class SessionView(BaseModel):
     active_job_id: str | None
 
 
-def valid_session_id(session_id: str) -> str:
-    if not SESSION_ID.fullmatch(session_id):
-        raise ApiError.from_code("session_not_found")
-    return session_id
-
-
 async def _owned(redis: Redis, session_id: str, owner: Owner) -> Conversation:
-    conversation = await load_session(redis, valid_session_id(session_id))
+    conversation = await load_session(redis, session_id) if is_session_id(session_id) else None
     # Someone else's session is reported exactly like a missing one.
     if conversation is None or conversation.owner != owner:
-        raise ApiError.from_code("session_not_found")
+        raise ApiError("session_not_found")
     return conversation
 
 
@@ -85,5 +77,5 @@ async def get(
 async def delete(session_id: str, principal: ReadPrincipal, redis: RedisDep) -> Response:
     await _owned(redis, session_id, principal.owner)
     if not await delete_session(redis, session_id):
-        raise ApiError.from_code("session_not_found")
+        raise ApiError("session_not_found")
     return Response(status_code=204)

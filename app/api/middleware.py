@@ -6,7 +6,6 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.errors import error_response
-from app.core.errors import ERRORS
 
 if TYPE_CHECKING:
     from app.api.auth import KeyStore
@@ -80,5 +79,4 @@ class BodySizeLimit:
         code: str,
         headers: dict[str, str] | None = None,
     ) -> None:
-        spec = ERRORS[code]
-        await error_response(spec.status, code, spec.message, headers)(scope, receive, send)
+        await error_response(code, headers)(scope, receive, send)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
@@ -10,6 +11,11 @@ from app.core.schemas import JobRecord, JobStatus
 
 # Slack for clock skew between API and worker hosts and for Redis round trips.
 GRACE = timedelta(seconds=30)
+JOB_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def is_job_id(value: str) -> bool:
+    return JOB_ID.fullmatch(value) is not None
 
 
 def job_key(job_id: str) -> str:

@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal
 
-from fastapi import Depends, Request
+from fastapi import Depends
+from redis.asyncio import Redis
 
 from app.api.auth import Principal, authenticate
+from app.api.dependencies import get_redis, get_settings
 from app.api.errors import ApiError
 from app.core.config import ApiSettings
 from app.core.ratelimit import Limit, hit
@@ -26,14 +28,13 @@ def _limits(settings: ApiSettings, bucket: Bucket, principal: Principal) -> list
 
 def rate_limited(bucket: Bucket) -> Callable[..., Awaitable[Principal]]:
     async def dependency(
-        request: Request, principal: Annotated[Principal, Depends(authenticate)]
+        principal: Annotated[Principal, Depends(authenticate)],
+        redis: Annotated[Redis, Depends(get_redis)],
+        settings: Annotated[ApiSettings, Depends(get_settings)],
     ) -> Principal:
-        settings: ApiSettings = request.app.state.settings
-        retry_after = await hit(
-            request.app.state.redis, bucket, _limits(settings, bucket, principal)
-        )
+        retry_after = await hit(redis, bucket, _limits(settings, bucket, principal))
         if retry_after is not None:
-            raise ApiError.from_code("rate_limited", headers={"Retry-After": str(retry_after)})
+            raise ApiError("rate_limited", headers={"Retry-After": str(retry_after)})
         return principal
 
     return dependency

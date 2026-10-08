@@ -10,8 +10,8 @@ from redis.asyncio import Redis
 from app.api.dependencies import get_redis, get_settings
 from app.api.limits import ReadPrincipal
 from app.core.config import ApiSettings
-from app.core.heartbeat import ModelState, fresh, model_state, read_heartbeats
-from app.core.schemas import WorkerState
+from app.core.heartbeat import fresh, model_state, read_heartbeats
+from app.core.schemas import ModelState, WorkerState
 
 router = APIRouter(prefix="/v1", tags=["model"])
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.core.config import SharedSettings
 from app.core.schemas import Owner, TurnRecord
 
 LOCK_SLACK_SECONDS = 60
+SESSION_ID = re.compile(r"[0-9a-f]{32}")
 
 # Lock values are job ids. Each script is one atomic check-then-act on the lock key.
 _ACQUIRE = """
@@ -34,6 +36,10 @@ return 0
 """
 
 
+def is_session_id(value: str) -> bool:
+    return SESSION_ID.fullmatch(value) is not None
+
+
 def session_key(session_id: str) -> str:
     return f"atlas:session:{session_id}"
 
@@ -50,6 +56,7 @@ def running_lock_ttl(settings: SharedSettings) -> int:
     return settings.job_timeout + LOCK_SLACK_SECONDS
 
 
+# Named Conversation, not Session, to avoid clashing with the SDK's Session it wraps.
 @dataclass
 class Conversation:
     """The SDK's English Session plus, per turn, what the user actually asked and saw.

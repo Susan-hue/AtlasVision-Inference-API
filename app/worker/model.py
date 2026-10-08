@@ -53,6 +53,8 @@ def load_model(settings: WorkerSettings) -> ChatModel:
 
 
 def load_error_code(exc: BaseException) -> str:
+    """Code published in the "failed" heartbeat. The API never returns it; it is there for
+    anyone inspecting Redis (`HGETALL atlas:workers`). The worker log has the full reason."""
     if isinstance(exc, AuthenticationError):
         return "model_auth_error"
     if isinstance(exc, GatedModelAccessError):
