@@ -1,0 +1,111 @@
+# Production: API, Redis and the GPU worker on one machine. See "Deploying to a GPU machine"
+# in the README.
+#   docker compose -f docker-compose.prod.yml up -d --build
+name: atlasvision-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Settings the API and the worker must agree on. Values come from .env (Compose reads it for
+# ${...}); the worker gets them here because its own env_file is .env.worker only, which
+# keeps API_KEYS out of the worker. Defaults mirror app/core/config.py (a test checks this).
+x-shared-env: &shared-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
+  IMAGE_TTL: ${IMAGE_TTL:-900}
+  RESULT_TTL: ${RESULT_TTL:-3600}
+  SESSION_TTL: ${SESSION_TTL:-86400}
+  JOB_TIMEOUT: ${JOB_TIMEOUT:-300}
+  MAX_SESSION_TURNS: ${MAX_SESSION_TURNS:-8}
+  HEARTBEAT_INTERVAL: ${HEARTBEAT_INTERVAL:-10}
+  HEARTBEAT_STALE_AFTER: ${HEARTBEAT_STALE_AFTER:-30}
+  LOG_CONTENT: ${LOG_CONTENT:-false}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-1gb}
+    # The config is written at start so the password never shows in the process list.
+    # volatile-lru only ever evicts keys with a TTL (idle sessions, old results first), never
+    # the arq queue or the worker heartbeats, which have none.
+    command:
+      - sh
+      - -c
+      - |
+        cat > /tmp/redis.conf <<CONF
+        requirepass $$REDIS_PASSWORD
+        maxmemory $$REDIS_MAXMEMORY
+        maxmemory-policy volatile-lru
+        appendonly yes
+        appendfsync everysec
+        save ""
+        CONF
+        chown redis:redis /tmp/redis.conf && chmod 600 /tmp/redis.conf
+        exec docker-entrypoint.sh redis-server /tmp/redis.conf
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: runtime
+    env_file: .env
+    environment: *shared-env
+    ports:
+      - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      target: gpu
+    env_file: .env.worker
+    environment: *shared-env
+    volumes:
+      - hf-cache:/models/hf
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Transient load failures exit and are retried with Docker's growing delay. Auth and
+    # gated-access failures do not exit (see app/worker/__main__.py), so they never loop.
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+
+volumes:
+  redis-data:
+  hf-cache:

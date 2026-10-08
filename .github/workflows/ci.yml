@@ -18,13 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Same commands as local development: everything runs in the Compose "tests"
-      # container against the Compose Redis.
       - name: Lint
         run: make lint
 
       - name: Test
         run: make test
+
+      # Validates docker-compose.prod.yml and the GPU Dockerfile without building it.
+      - name: Check production config
+        run: |
+          printf 'API_KEYS=ci\nREDIS_PASSWORD=ci\n' > .env
+          printf 'HF_TOKEN=ci\n' > .env.worker
+          docker compose -f docker-compose.prod.yml config --quiet
+          docker build --check -f docker/worker.Dockerfile --target gpu .
 
       - name: Stop containers
         if: always()
