@@ -34,7 +34,9 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app = FastAPI(title="AtlasVision Inference API", lifespan=lifespan)
     app.state.settings = settings
     app.state.key_store = EnvKeyStore(settings.api_keys)
-    app.add_middleware(BodySizeLimit, max_bytes=settings.max_request_bytes)
+    app.add_middleware(
+        BodySizeLimit, max_bytes=settings.max_request_bytes, key_store=app.state.key_store
+    )
 
     if settings.cors_origins:
         app.add_middleware(
