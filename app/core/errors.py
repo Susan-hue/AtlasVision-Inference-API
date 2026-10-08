@@ -21,6 +21,13 @@ class ErrorSpec(NamedTuple):
 
 
 ERRORS: dict[str, ErrorSpec] = {
+    "unauthorized": ErrorSpec(401, "A valid API key is required."),
+    "invalid_client_id": ErrorSpec(
+        400, "X-Client-Id must be 8-128 characters: letters, digits, '-' or '_'."
+    ),
+    "rate_limited": ErrorSpec(429, "Too many requests. Please slow down and try again shortly."),
+    "queue_full": ErrorSpec(503, "The service is busy. Please try again shortly."),
+    "request_too_large": ErrorSpec(413, "The request body is too large."),
     "invalid_image": ErrorSpec(422, "The image could not be read."),
     "unsupported_language": ErrorSpec(422, "Language must be one of en, ig, yo, ha."),
     "invalid_input": ErrorSpec(422, "The request could not be processed."),

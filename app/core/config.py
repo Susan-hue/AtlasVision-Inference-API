@@ -53,8 +53,12 @@ class ApiSettings(SharedSettings):
     max_question_chars: int = Field(default=1000, gt=0)
 
     max_queue_depth: int = Field(default=100, gt=0)
-    rate_limit: int = Field(default=60, gt=0)
-    rate_limit_poll: int = Field(default=1200, gt=0)
+
+    # Requests per minute. "Submit" is POST /v1/jobs/chat; "read" is every other endpoint.
+    rate_limit_submit_per_client: int = Field(default=10, gt=0)
+    rate_limit_submit_per_key: int = Field(default=120, gt=0)
+    rate_limit_read_per_client: int = Field(default=120, gt=0)
+    rate_limit_read_per_key: int = Field(default=3000, gt=0)
 
     @field_validator("api_keys", "cors_origins", mode="before")
     @classmethod
@@ -64,6 +68,11 @@ class ApiSettings(SharedSettings):
     @property
     def max_image_bytes(self) -> int:
         return int(self.max_image_mb * 1024 * 1024)
+
+    @property
+    def max_request_bytes(self) -> int:
+        # Room for the multipart framing and the text fields around the image.
+        return self.max_image_bytes + 64 * 1024
 
 
 class WorkerSettings(SharedSettings):
