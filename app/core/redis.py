@@ -10,6 +10,8 @@ from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
+PING_TIMEOUT_SECONDS = 1.0
+
 
 def create_redis(url: str) -> Redis:
     """Build a pooled async client.
@@ -27,10 +29,10 @@ def create_redis(url: str) -> Redis:
     )
 
 
-async def ping(redis: Redis, timeout: float = 1.0) -> bool:
-    """True if Redis answers PING within `timeout` seconds."""
+async def ping(redis: Redis) -> bool:
+    """True if Redis answers PING within PING_TIMEOUT_SECONDS."""
     try:
-        async with asyncio.timeout(timeout):
+        async with asyncio.timeout(PING_TIMEOUT_SECONDS):
             return bool(await redis.ping())
     except (RedisError, OSError, TimeoutError) as exc:
         # Log the error type only: the message can include the URL, and the URL can
