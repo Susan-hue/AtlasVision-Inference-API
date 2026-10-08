@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from pydantic import ValidationError
 
@@ -93,3 +95,27 @@ def test_load_in_4bit_unset_means_auto() -> None:
 def test_heartbeat_stale_after_must_exceed_interval() -> None:
     with pytest.raises(ValidationError, match="HEARTBEAT_STALE_AFTER"):
         ApiSettings(_env_file=None, heartbeat_interval=10, heartbeat_stale_after=10)
+
+
+def test_worker_reads_env_worker_file_and_api_does_not(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".env").write_text("LOG_LEVEL=DEBUG\n")
+    (tmp_path / ".env.worker").write_text("HF_TOKEN=hf_from_worker_file\n")
+    monkeypatch.chdir(tmp_path)
+
+    worker = WorkerSettings()
+    api = ApiSettings()
+
+    assert worker.hf_token is not None
+    assert worker.hf_token.get_secret_value() == "hf_from_worker_file"
+    assert worker.log_level == api.log_level == "DEBUG"
+    assert "hf_from_worker_file" not in repr(api)
+
+
+def test_retry_after_defaults() -> None:
+    settings = ApiSettings(_env_file=None)
+
+    assert settings.retry_after_model_unavailable == 30
+    assert settings.retry_after_queue_full == 30
+    assert settings.retry_after_service_unavailable == 5

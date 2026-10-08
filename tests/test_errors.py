@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pathlib
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 from testatlasvision import (
@@ -10,6 +13,7 @@ from testatlasvision import (
     UnsupportedLanguageError,
 )
 
+from app.api.errors import HTTP_CODES, error_response
 from app.core.errors import ERRORS, code_for
 from app.core.schemas import WorkerState
 from tests.conftest import api_client, make_worker_settings, run_worker, submit_chat
@@ -84,3 +88,31 @@ def test_sdk_error_in_api_uses_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "model_unavailable"
     assert "secret" not in response.text
+
+
+def test_every_error_code_used_in_the_code_is_in_the_catalog() -> None:
+    source = "\n".join(p.read_text() for p in pathlib.Path("app").rglob("*.py"))
+    pattern = (
+        r"(?:ApiError|JobFailure|ImageRejected|_failed|job_error|error_response|_send_error)"
+        r'\(\s*(?:record,\s*|scope, receive, send,\s*)?"([a-z_]+)"'
+    )
+    used = set(re.findall(pattern, source))
+    used |= set(HTTP_CODES.values())
+
+    assert used, "pattern found nothing"
+    assert used - ERRORS.keys() == set()
+
+
+def test_job_only_codes_are_never_sent_as_responses() -> None:
+    job_only = [code for code, spec in ERRORS.items() if spec.status is None]
+
+    assert set(job_only) == {
+        "invalid_input",
+        "image_expired",
+        "job_expired",
+        "job_interrupted",
+        "worker_lost",
+    }
+    for code in job_only:
+        with pytest.raises(ValueError):
+            error_response(code)

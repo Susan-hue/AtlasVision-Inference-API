@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.heartbeat import ModelState, accepts_jobs, model_state
-from app.core.schemas import Heartbeat, WorkerState
+from app.core.heartbeat import accepts_jobs, model_state
+from app.core.schemas import Heartbeat, ModelState, WorkerState
 
 NOW = 1_000_000.0
 

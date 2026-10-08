@@ -141,7 +141,8 @@ def test_rejects_oversized_image(sync_redis: redis.Redis, publish_heartbeat) -> 
         response = submit_chat(client, image=noisy)
 
     assert response.status_code == 413
-    assert response.json()["error"]["code"] == "image_too_large"
+    # Image over MAX_IMAGE_MB but whole body within the request cap: same code as the cap.
+    assert response.json()["error"]["code"] == "request_too_large"
 
 
 def test_missing_image_uses_error_shape(client: TestClient, ready: None) -> None:
@@ -151,8 +152,75 @@ def test_missing_image_uses_error_shape(client: TestClient, ready: None) -> None
 
     assert response.status_code == 422
     assert response.json() == {
-        "error": {"code": "invalid_request", "message": "image: Field required"}
+        "error": {
+            "code": "invalid_request",
+            "message": "A field is missing or invalid.",
+            "field": "image",
+            "problem": "Field required",
+        }
     }
+
+
+@pytest.mark.parametrize("fields", [{"question": ""}, {"question": "   "}, {}])
+def test_empty_or_missing_question_is_invalid_question(
+    client: TestClient, ready: None, fields: dict[str, str]
+) -> None:
+    data = {"lang": "en", "question_lang": "en", **fields}
+    files = {"image": ("photo", image_bytes(), "image/png")}
+
+    response = client.post("/v1/jobs/chat", data=data, files=files)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_question"
+
+
+def test_error_details_go_in_extra_fields(client: TestClient, ready: None) -> None:
+    too_long = submit_chat(client, question="x" * 1001).json()["error"]
+    bad_lang = submit_chat(client, question_lang="xx").json()["error"]
+
+    assert too_long == {
+        "code": "question_too_long",
+        "message": "question is too long.",
+        "max_length": 1000,
+    }
+    assert bad_lang == {
+        "code": "unsupported_language",
+        "message": "Language must be one of en, ig, yo, ha.",
+        "field": "question_lang",
+    }
+
+
+def test_unparseable_body_is_bad_request(client: TestClient) -> None:
+    response = client.post(
+        "/v1/jobs/chat",
+        content=b"--x\r\nnot multipart at all",
+        headers={"Content-Type": "multipart/form-data; boundary=x"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "bad_request"
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "prepare"),
+    [
+        ("retry_after_model_unavailable", 7, "no-worker"),
+        ("retry_after_queue_full", 11, "full-queue"),
+    ],
+)
+def test_retry_after_comes_from_settings(
+    sync_redis: redis.Redis, publish_heartbeat, setting: str, value: int, prepare: str
+) -> None:
+    if prepare == "full-queue":
+        publish_heartbeat(WorkerState.READY)
+    settings = make_api_settings(max_queue_depth=1, **{setting: value})
+    with api_client(settings) as client:
+        if prepare == "full-queue":
+            submit_chat(client)
+        response = submit_chat(client)
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == str(value)
 
 
 def _store(sync_redis: redis.Redis, record: JobRecord) -> None:

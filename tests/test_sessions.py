@@ -26,7 +26,7 @@ SETTINGS = make_api_settings()
 QUEUED_LOCK_TTL = SETTINGS.image_ttl + SETTINGS.job_timeout + 60
 RUNNING_LOCK_TTL = SETTINGS.job_timeout + 60
 BUSY_MESSAGE = (
-    "This conversation is still answering your previous question. "
+    "This session is still answering your previous question. "
     "Please wait for that answer before asking another."
 )
 

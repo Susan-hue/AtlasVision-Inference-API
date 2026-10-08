@@ -87,3 +87,16 @@ def test_key_id_does_not_contain_the_key() -> None:
 def test_api_refuses_to_start_without_keys() -> None:
     with pytest.raises(RuntimeError, match="API_KEYS"):
         create_app(make_api_settings(api_keys=[]))
+
+
+def test_api_warns_when_hf_token_is_in_its_environment(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "hf_should_not_be_here")
+    # configure_logging replaces the root handlers, which would remove caplog's handler.
+    monkeypatch.setattr("app.api.main.configure_logging", lambda level: None)
+
+    create_app(make_api_settings())
+
+    assert "HF_TOKEN is set in the API's environment" in caplog.text
+    assert "hf_should_not_be_here" not in caplog.text
