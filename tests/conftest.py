@@ -16,7 +16,9 @@ from PIL import Image
 from app.api.main import create_app
 from app.core.config import ApiSettings, WorkerSettings
 from app.core.heartbeat import WORKERS_KEY
+from app.core.redis import create_redis
 from app.core.schemas import Heartbeat, WorkerState
+from app.worker.jobs import run_chat_job
 from app.worker.main import worker_options
 
 TEST_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
@@ -92,3 +94,17 @@ def submit_chat(
     data = {"question": "What is this?", "lang": "yo", "question_lang": "en", **fields}
     files = {"image": ("photo", image if image is not None else image_bytes(), content_type)}
     return client.post("/v1/jobs/chat", data=data, files=files)
+
+
+def run_job(job_id: str, model: Any, settings: WorkerSettings | None = None) -> None:
+    """Run one job directly with a given model, without arq."""
+    settings = settings or make_worker_settings()
+
+    async def _run() -> None:
+        client = create_redis(settings.redis_url)
+        try:
+            await run_chat_job({"redis": client, "settings": settings, "model": model}, job_id)
+        finally:
+            await client.aclose()
+
+    asyncio.run(_run())

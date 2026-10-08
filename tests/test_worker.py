@@ -64,7 +64,7 @@ def test_sdk_error_fails_job_and_deletes_image(
 
     body = _poll(client, job_id)
     assert body["status"] == "failed"
-    assert body["error"] == {"code": "internal_error", "message": "The job failed."}
+    assert body["error"] == {"code": "invalid_image", "message": "The image could not be read."}
     assert sync_redis.exists(image_key(job_id)) == 0
 
 
