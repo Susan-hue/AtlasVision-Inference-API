@@ -8,7 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health
+from app.api.errors import install_error_handlers
+from app.api.routes import health, jobs
 from app.core.config import ApiSettings, get_api_settings
 from app.core.logging import configure_logging
 from app.core.redis import create_redis
@@ -37,5 +38,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
             allow_headers=["X-API-Key", "Content-Type"],
         )
 
+    install_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(jobs.router)
     return app
