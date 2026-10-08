@@ -1,7 +1,5 @@
-# Test and lint tooling, layered on top of the locked API dependencies.
 -c api.txt
 -r api.in
 pytest>=9.1
-# Starlette's TestClient now uses httpx2 (plain httpx is deprecated there).
-httpx2>=2.13
+httpx>=0.28
 ruff>=0.16

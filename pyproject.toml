@@ -3,8 +3,6 @@ name = "atlasvision-api"
 version = "0.1.0"
 description = "Job-queue inference API around the testatlasvision SDK"
 requires-python = ">=3.11,<3.12"
-# Runtime dependencies live in requirements/*.in (one set per image), not here,
-# because the API and worker images must install different things.
 
 [tool.ruff]
 line-length = 100
@@ -25,3 +23,7 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+filterwarnings = [
+    # Starlette's TestClient warns when using httpx instead of httpx2; we stay on httpx.
+    'ignore:^Using `httpx` with `starlette\.testclient` is deprecated; install `httpx2` instead\.$:starlette.exceptions.StarletteDeprecationWarning',
+]
