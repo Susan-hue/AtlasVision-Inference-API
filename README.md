@@ -72,8 +72,10 @@ Three processes:
 - **Sessions** store the SDK's English history plus what the user actually asked and saw,
   trimmed to `MAX_SESSION_TURNS`. A per-session lock (atomic Lua scripts) allows one question
   at a time; a second one gets `409 session_busy`.
-- **Errors:** one catalog of codes and safe messages (`app/core/errors.py`) maps SDK
-  exceptions to client codes; details go to the worker log only.
+- **Errors:** one catalog (`app/core/errors.py`) holds every client-facing code, its HTTP
+  status and its fixed message, and maps SDK exceptions to codes. Varying details (which
+  field, which limit) go in extra fields of the error body; internal details go to the logs
+  only. A test fails if code uses an error code missing from the catalog.
 - **Fake model:** `FakeAtlasVision` has the SDK's exact method signatures (checked by a test),
   gives deterministic answers, simulates 1-3 generations and can raise any SDK error on demand.
 
@@ -107,6 +109,7 @@ cd AtlasVision-Inference-API
 cp .env.example .env
 KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")   # or any long random string
 sed -i "s|^API_KEYS=.*|API_KEYS=$KEY|" .env      # macOS: sed -i '' "s|...|...|" .env
+cp .env.worker.example .env.worker               # optional: worker-only settings
 
 make up        # builds and starts redis, api and the fake-model worker
 ```
@@ -153,11 +156,17 @@ make down      # stop everything
 
 Settings come from environment variables, read by
 [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) in
-`app/core/config.py`. A `.env` file in the working directory is also read; Compose passes `.env`
-to the API and worker containers. `.env.example` lists every variable with comments.
+`app/core/config.py`. Two files hold them locally, each documented by its `.example`:
 
-Compose always sets `REDIS_URL` for its containers and forces `USE_FAKE_MODEL=true` for its
-worker. Durations are in seconds.
+| File | Read by | Holds |
+|---|---|---|
+| `.env` | API and worker | Shared and API settings ([below](#shared-api-and-worker)) |
+| `.env.worker` | worker only | Worker settings, including `HF_TOKEN` ([below](#worker-only)) |
+
+Keeping worker settings in `.env.worker` means the Hugging Face token never reaches the API;
+the API logs a warning if `HF_TOKEN` is in its environment anyway. Compose always sets
+`REDIS_URL` for its containers and forces `USE_FAKE_MODEL=true` for its worker. Durations are
+in seconds.
 
 ### Shared (API and worker)
 
@@ -188,15 +197,20 @@ worker. Durations are in seconds.
 | `RATE_LIMIT_SUBMIT_PER_KEY` | `120` | `POST /v1/jobs/chat` per key (all visitors) per minute. |
 | `RATE_LIMIT_READ_PER_CLIENT` | `120` | Other requests per visitor per minute (polling every 2 s uses 30). |
 | `RATE_LIMIT_READ_PER_KEY` | `3000` | Other requests per key per minute. |
+| `RETRY_AFTER_MODEL_UNAVAILABLE` | `30` | `Retry-After` sent with `503 model_unavailable`. |
+| `RETRY_AFTER_QUEUE_FULL` | `30` | `Retry-After` sent with `503 queue_full`. |
+| `RETRY_AFTER_SERVICE_UNAVAILABLE` | `5` | `Retry-After` sent with `503 service_unavailable` (Redis unreachable). |
 
 ### Worker only
+
+Put these in `.env.worker`.
 
 | Variable | Default | Description |
 |---|---|---|
 | `HF_TOKEN` | (none) | Hugging Face token with access to the gated `NCAIR1/N-ATLaS`. **Required unless `USE_FAKE_MODEL=true`.** Never set it on the API. |
 | `ATLAS_STAGE` | `2b` | Checkpoint: `2b` (recommended), `2`, or `1` (captioner). |
 | `LOAD_IN_4BIT` | unset | `true`/`false`; unset lets the SDK decide (4-bit on GPUs under 20 GB). |
-| `USE_FAKE_MODEL` | `false` | Use `FakeAtlasVision` instead of the real model. `.env.example` and Compose set it to `true`. |
+| `USE_FAKE_MODEL` | `false` | Use `FakeAtlasVision` instead of the real model. `.env.worker.example` and Compose set it to `true`. |
 | `FAKE_LOAD_SECONDS` | `2` | Fake model: simulated load time. |
 | `FAKE_GENERATION_SECONDS` | `0.5` | Fake model: time per simulated generation. |
 | `FAKE_LOAD_ERROR` | unset | Fake model: fail at startup with `AuthenticationError`, `GatedModelAccessError` or `ModelLoadError`. |
@@ -220,8 +234,9 @@ Full details, examples and error handling: [docs/frontend-api.md](docs/frontend-
 | `GET /health` | none | API and Redis liveness: `200` or `503`. |
 | `GET /docs`, `/openapi.json` | key | Interactive docs and schema (send `X-API-Key`, e.g. with a browser extension). |
 
-Every error is `{"error": {"code": "...", "message": "..."}}`. Validation problems are real
-4xx/5xx responses; failures inside a job come back in a `200` poll with `"status": "failed"`.
+Every error is `{"error": {"code": "...", "message": "..."}}`, sometimes with extra detail
+fields such as `field` or `job_id`. Validation problems are real 4xx/5xx responses; failures
+inside a job come back in a `200` poll with `"status": "failed"`.
 
 ## Security
 
@@ -235,8 +250,9 @@ Every error is `{"error": {"code": "...", "message": "..."}}`. Validation proble
   key. Jobs and sessions belong to their key and client id; anyone else gets `404`.
 - **Not for browsers:** call the API from a server route that holds the key. CORS is off by
   default.
-- **`HF_TOKEN`** exists only in the worker's environment, is never logged (the SDK's own token
-  log line is silenced) and never returned.
+- **`HF_TOKEN`** lives in `.env.worker`, which only the worker reads. It is never logged (the
+  SDK's own token log line is silenced) and never returned; the API warns if it finds the
+  token in its own environment.
 - **No remote images:** the API accepts uploads only. The worker builds the client with
   `allow_remote_images=False` and passes image **bytes** to the SDK, never a path or URL.
 - **User content** (questions, answers) is logged only with `LOG_CONTENT=true`.
@@ -327,6 +343,7 @@ slow connection this takes several minutes (we measured 3-4 minutes per image at
 
 | Symptom | Cause and fix |
 |---|---|
+| API log warns `HF_TOKEN is set in the API's environment` | Move `HF_TOKEN` from `.env` to `.env.worker`. |
 | `api` container exits; log says `API_KEYS is empty` | Set `API_KEYS` in `.env`, then `make up`. |
 | `401 unauthorized` | Missing or wrong `X-API-Key`. It must match one of `API_KEYS` exactly. |
 | `401` on `/docs` | The docs need the key too. Use a browser extension that adds `X-API-Key`, or fetch `/openapi.json` with curl. |

@@ -8,7 +8,7 @@ English, Igbo, Yoruba and Hausa.
 - [The Vercel route](#the-vercel-route)
 - [Asking a question](#asking-a-question)
 - [Polling for the answer](#polling-for-the-answer)
-- [Conversations (sessions)](#conversations-sessions)
+- [Sessions](#sessions)
 - [Other endpoints](#other-endpoints)
 - [Errors](#errors)
 - [Rate limits and Retry-After](#rate-limits-and-retry-after)
@@ -44,13 +44,13 @@ and never sees the API key.
 | `X-Client-Id` | An anonymous id for the visitor, kept in a cookie (see below). |
 
 - **`X-Client-Id`** keeps visitors apart: each visitor only sees their own jobs and
-  conversations, and rate limits apply per visitor. It must be 8-128 characters of letters,
+  sessions, and rate limits apply per visitor. It must be 8-128 characters of letters,
   digits, `-` or `_` (a UUID from `crypto.randomUUID()` is ideal). Generate it once per
   visitor and store it in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. Never derive it from
   personal data (email, IP address, name).
 - **Set both headers in the route.** Ignore any `X-API-Key` or `X-Client-Id` the browser sends,
   so a visitor cannot borrow someone else's id.
-- A visitor who clears their cookies gets a new id. Their old conversations then become
+- A visitor who clears their cookies gets a new id. Their old sessions then become
   unreachable (404) and simply expire.
 
 ### Example (Next.js App Router)
@@ -133,10 +133,10 @@ pattern as the job route.
 | Field | Required | Value |
 |---|---|---|
 | `image` | yes | JPEG, PNG or WebP, at most 4 MB. Send the image with **every** question, including follow-ups. |
-| `question` | yes | 1-1000 characters. |
+| `question` | yes | 1-1000 characters (not just spaces). |
 | `lang` | yes | Language of the answer: `en`, `ig`, `yo` or `ha` (names such as `Yoruba` also work). |
 | `question_lang` | yes | Language the question is written in. Must be `en` or the same as `lang`. |
-| `session_id` | no | A conversation id from `POST /v1/sessions`, for follow-up questions. Leave it out (or empty) for a one-off question. |
+| `session_id` | no | A session id from `POST /v1/sessions`, for follow-up questions. Leave it out (or empty) for a one-off question. |
 
 The whole request must be under about 4 MB (Vercel's own limit is 4.5 MB), so
 [resize images first](#preparing-the-image).
@@ -173,7 +173,7 @@ The `Location` header also points at `/v1/jobs/4b19d57942c64b17a421f4f798f24022`
 
 Before accepting, the API checks, in this order: the key and the request size; the rate limits;
 the fields and languages; that the model is available and the queue is not full; the image;
-and finally the conversation (it must exist, belong to this visitor, and not be busy). The first
+and finally the session (it must exist, belong to this visitor, and not be busy). The first
 failed check decides the [error](#errors) you get.
 
 ## Polling for the answer
@@ -269,19 +269,20 @@ async function waitForAnswer(jobId: string, signal?: AbortSignal) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 ```
 
-## Conversations (sessions)
+## Sessions
 
-A session lets the user ask follow-up questions about the same picture ("What colour is it?").
+A session is one conversation: it lets the user ask follow-up questions about the same
+picture ("What colour is it?").
 
-1. **Start a conversation:** `POST /v1/sessions` → `201 {"session_id": "..."}`.
+1. **Start a session:** `POST /v1/sessions` → `201 {"session_id": "..."}`.
 2. **Ask:** send `session_id` with each `POST /v1/jobs/chat`, **and the image every time**. The
    session remembers the conversation text, not the picture.
-3. **One question at a time:** disable the send button while a question in this conversation
+3. **One question at a time:** disable the send button while a question in this session
    is queued or running. If a second question arrives anyway, the API replies `409
    session_busy` with the `job_id` still in progress: keep polling that job instead.
 4. **New chat:** `DELETE /v1/sessions/{id}` (`204`), then start a new session. Deleting while a
    question is still being answered is fine: that answer still arrives through its job, it is
-   just not saved to the deleted conversation.
+   just not saved to the deleted session.
 
 Only the last 8 exchanges are remembered. A session expires after 24 hours without use; after
 that, using it returns `404 session_not_found`, so start a new one.
@@ -292,16 +293,16 @@ that, using it returns `404 session_not_found`, so start a new one.
 {
   "error": {
     "code": "session_busy",
-    "message": "This conversation is still answering your previous question. Please wait for that answer before asking another.",
+    "message": "This session is still answering your previous question. Please wait for that answer before asking another.",
     "job_id": "31ed0b8dd79a4fc386e54c60a119860c"
   }
 }
 ```
 
-### Restoring a conversation
+### Restoring a session
 
-`GET /v1/sessions/{id}` returns the conversation so you can redraw it, for example after a page
-reload. `active_job_id` is the job still being answered, if any: resume polling it and keep
+`GET /v1/sessions/{id}` returns the session's history so you can redraw the conversation, for
+example after a page reload. `active_job_id` is the job still being answered, if any: resume polling it and keep
 sending disabled.
 
 ```json
@@ -343,11 +344,20 @@ Questions can be submitted while `state` is `loading`; they wait until the model
 
 ## Errors
 
-Every error has the same shape, with an English `message` meant for developers and logs:
+Every error has the same shape. `message` is a fixed English text meant for developers and
+logs; some errors add fields with details:
 
 ```json
 {"error": {"code": "rate_limited", "message": "Too many requests. Please slow down and try again shortly."}}
+{"error": {"code": "unsupported_language", "message": "Language must be one of en, ig, yo, ha.", "field": "question_lang"}}
 ```
+
+| Extra field | On | Meaning |
+|---|---|---|
+| `field` | `invalid_request`, `unsupported_language` | The form field at fault, e.g. `image`, `lang`, `question_lang`. |
+| `problem` | `invalid_request` | What is wrong with it, e.g. `Field required`. |
+| `max_length` | `question_too_long` | The longest question allowed, in characters. |
+| `job_id` | `session_busy` | The job still being answered: keep polling it. |
 
 Use `code` to decide what to do and what to show. The suggested messages below are written for
 end users; translate them as you need.
@@ -359,18 +369,17 @@ end users; translate them as you need.
 
 | Code | HTTP | Where | Suggested message | What to do |
 |---|---|---|---|---|
-| `invalid_question` | 422 | submit | "Please type a question." | Block blank questions in the UI. (A completely empty `question` field comes back as `invalid_request` instead.) |
-| `question_too_long` | 422 | submit | "Your question is too long. Please shorten it." | Limit the input to 1000 characters. |
-| `unsupported_language` | 422 | submit, poll | "That language isn't supported yet." | Only offer en, ig, yo, ha. |
+| `invalid_question` | 422 | submit | "Please type a question." | The question is missing, empty or only spaces. Block blank questions in the UI. |
+| `question_too_long` | 422 | submit | "Your question is too long. Please shorten it." | Limit the input to `max_length` (1000) characters. |
+| `unsupported_language` | 422 | submit, poll | "That language isn't supported yet." | Only offer en, ig, yo, ha. `field` says which field. |
 | `invalid_question_lang` | 422 | submit | "Please ask in English or in the language you chose." | Send `question_lang` = `en` or `lang`. |
-| `invalid_request` | 422 | submit | "Something went wrong. Please try again." | A field is missing, empty or malformed; `message` names it (e.g. `"image: Field required"`). |
+| `invalid_request` | 422 | submit | "Something went wrong. Please try again." | A field is missing or malformed: see `field` and `problem`. A bug in the route. |
 | `unsupported_media_type` | 415 | submit | "Please choose a JPEG, PNG or WebP picture." | Only accept those types. |
-| `image_too_large` | 413 | submit | "This picture is too large. Please choose a smaller one." | Resize before upload. |
-| `request_too_large` | 413 | submit | "This picture is too large. Please choose a smaller one." | Resize before upload. |
+| `request_too_large` | 413 | submit | "This picture is too large. Please choose a smaller one." | The image is over 4 MB (or the whole request over 4 MB + 64 KB). Resize before upload. |
 | `invalid_image` | 422 | submit, poll | "We couldn't read this picture. Please try another one." | The file is damaged or not really an image. |
-| `invalid_input` | 422 | poll | "We couldn't answer that. Please rephrase your question." | The model rejected the input. |
+| `invalid_input` | (poll) | poll | "We couldn't answer that. Please rephrase your question." | The model rejected the input. |
 
-### Conversations and jobs
+### Sessions and jobs
 
 | Code | HTTP | Where | Suggested message | What to do |
 |---|---|---|---|---|
@@ -390,7 +399,7 @@ end users; translate them as you need.
 | `queue_full` | 503 | submit | "We're very busy right now. Please try again in a moment." | Wait `Retry-After` seconds. |
 | `model_unavailable` | 503 | submit, poll | "The service is starting up or unavailable. Please try again shortly." | Wait `Retry-After` seconds; check `GET /v1/model`. |
 | `service_unavailable` | 503 | any | "The service is temporarily unavailable. Please try again shortly." | Wait `Retry-After` seconds. |
-| `internal_error` | 500, poll | any | "Something went wrong. Please try again." | Retry once; report if it persists. |
+| `internal_error` | 500 / poll | any | "Something went wrong. Please try again." | Retry once; report if it persists. |
 
 ### Problems in the route (should never reach users)
 
@@ -398,12 +407,16 @@ end users; translate them as you need.
 |---|---|---|
 | `unauthorized` | 401 | Missing or wrong `X-API-Key`. Check the route's environment variable. |
 | `invalid_client_id` | 400 | `X-Client-Id` is not 8-128 letters, digits, `-` or `_`. |
+| `bad_request` | 400 | The body could not be parsed (e.g. broken multipart). |
 | `not_found`, `method_not_allowed` | 404, 405 | Wrong URL or HTTP method. |
 
 Show users the generic "Something went wrong. Please try again." for these, and log them.
 
-Errors are deliberately vague about other people's data: a job or conversation that belongs to
+Errors are deliberately vague about other people's data: a job or session that belongs to
 another visitor returns the same `404` as one that never existed.
+
+"(poll)" in the HTTP column means the code only ever appears inside a `failed` job, in a
+`200` poll response.
 
 ## Rate limits and Retry-After
 
@@ -420,7 +433,8 @@ another visitor returns the same `404` as one that never existed.
 - Limits use a sliding one-minute window, and rejected requests count too, so retrying in a
   tight loop only extends the wait.
 - `429`, `503 queue_full`, `503 model_unavailable` and `503 service_unavailable` include a
-  `Retry-After` header: the number of seconds to wait (for `429`, up to 120).
+  `Retry-After` header: the number of seconds to wait. For `429` it is exact (up to 120);
+  the `503` values are fixed by the operator (defaults: 30, 30 and 5 seconds).
 - **Polls:** after a `429`, wait `Retry-After` seconds and continue polling.
 - **Questions:** don't resubmit automatically. Show the message, and let the user try again
   once the wait is over (for example by disabling the send button for `Retry-After` seconds).
@@ -461,6 +475,6 @@ async function prepareImage(file: File, maxSide = 1024): Promise<Blob> {
 - [ ] `question_lang` is `en` or equal to `lang`.
 - [ ] The image is sent with every question, including follow-ups.
 - [ ] Polling every 2 seconds stops on `done` or `failed`, and checks `status`, not just HTTP 200.
-- [ ] Sending is disabled while a conversation has a question in progress; `409` resumes polling `error.job_id`.
+- [ ] Sending is disabled while a session has a question in progress; `409` resumes polling `error.job_id`.
 - [ ] `Retry-After` is honoured for `429` and `503`.
 - [ ] Every error `code` maps to a friendly message.
