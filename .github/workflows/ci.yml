@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same commands as local development: everything runs in the Compose "tests"
+      # container against the Compose Redis.
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Stop containers
+        if: always()
+        run: docker compose --profile test down --volumes
