@@ -1,4 +1,5 @@
 .git
+.github
 .env
 .env.*
 !.env.example
@@ -8,3 +9,6 @@
 .ruff_cache
 .venv
 venv
+assest_for_test
+docs
+tests
