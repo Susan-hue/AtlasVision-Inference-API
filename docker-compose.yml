@@ -37,6 +37,22 @@ services:
       timeout: 3s
       retries: 3
 
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      target: fake
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      USE_FAKE_MODEL: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   # No env_file on purpose: tests must not depend on your .env.
   tests:
     profiles: ["test"]

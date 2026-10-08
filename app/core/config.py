@@ -71,9 +71,15 @@ class WorkerSettings(SharedSettings):
     atlas_stage: Literal["1", "2", "2b"] = "2b"
     # None lets the SDK decide (4-bit below 20 GB of GPU memory).
     load_in_4bit: bool | None = None
-    use_fake_model: bool = False
 
-    @field_validator("hf_token", "load_in_4bit", mode="before")
+    use_fake_model: bool = False
+    fake_load_seconds: float = Field(default=2.0, ge=0)
+    fake_generation_seconds: float = Field(default=0.5, ge=0)
+    fake_load_error: (
+        Literal["AuthenticationError", "GatedModelAccessError", "ModelLoadError"] | None
+    ) = None
+
+    @field_validator("hf_token", "load_in_4bit", "fake_load_error", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: Any) -> Any:
         return None if isinstance(value, str) and not value.strip() else value
