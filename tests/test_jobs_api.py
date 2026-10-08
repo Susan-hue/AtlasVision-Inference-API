@@ -8,10 +8,9 @@ import redis
 from arq.constants import default_queue_name
 from fastapi.testclient import TestClient
 
-from app.api.main import create_app
 from app.core.jobs import image_key, job_key, utcnow
 from app.core.schemas import ChatParams, JobRecord, JobStatus, WorkerState
-from tests.conftest import image_bytes, make_api_settings, submit_chat
+from tests.conftest import TEST_OWNER, api_client, image_bytes, make_api_settings, submit_chat
 
 
 @pytest.fixture
@@ -138,7 +137,7 @@ def test_accepts_supported_formats(client: TestClient, ready: None, fmt: str) ->
 def test_rejects_oversized_image(sync_redis: redis.Redis, publish_heartbeat) -> None:
     publish_heartbeat(WorkerState.READY)
     noisy = image_bytes(300, 300, "PNG") + os.urandom(2048)
-    with TestClient(create_app(make_api_settings(max_image_mb=0.001))) as client:
+    with api_client(make_api_settings(max_image_mb=0.001)) as client:
         response = submit_chat(client, image=noisy)
 
     assert response.status_code == 413
@@ -162,7 +161,13 @@ def _store(sync_redis: redis.Redis, record: JobRecord) -> None:
 
 def _record(**updates: object) -> JobRecord:
     params = ChatParams(question="q", lang="en", question_lang="en", max_new_tokens=10)
-    base = JobRecord(job_id="a" * 32, status=JobStatus.QUEUED, created_at=utcnow(), params=params)
+    base = JobRecord(
+        job_id="a" * 32,
+        status=JobStatus.QUEUED,
+        owner=TEST_OWNER,
+        created_at=utcnow(),
+        params=params,
+    )
     return base.model_copy(update=updates)
 
 

@@ -10,10 +10,9 @@ from testatlasvision import (
     UnsupportedLanguageError,
 )
 
-from app.api.main import create_app
 from app.core.errors import ERRORS, code_for
 from app.core.schemas import WorkerState
-from tests.conftest import make_api_settings, make_worker_settings, run_worker, submit_chat
+from tests.conftest import api_client, make_worker_settings, run_worker, submit_chat
 
 EXPECTED_CODES = {
     "ImageLoadError": "invalid_image",
@@ -65,7 +64,7 @@ def _broken_app(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> TestClient:
         raise exc
 
     monkeypatch.setattr("app.api.routes.sessions.create_session", boom)
-    return TestClient(create_app(make_api_settings()), raise_server_exceptions=False)
+    return api_client(raise_server_exceptions=False)
 
 
 def test_unexpected_api_error_is_generic_500(monkeypatch: pytest.MonkeyPatch) -> None:

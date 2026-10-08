@@ -14,6 +14,7 @@ from app.core.schemas import ChatParams, JobRecord, JobStatus, WorkerState
 from app.core.sessions import Conversation, lock_key, session_key
 from app.worker.fake_model import FakeAtlasVision
 from tests.conftest import (
+    TEST_OWNER,
     make_api_settings,
     make_worker_settings,
     run_job,
@@ -54,6 +55,7 @@ def seed_history(sync_redis: redis.Redis, session_id: str, turns: int) -> None:
             {"question": f"yo-q{i}", "question_lang": "yo", "lang": "yo", "answer": f"yo-a{i}"}
             for i in numbers
         ],
+        "owner": TEST_OWNER.model_dump(),
     }
     sync_redis.set(session_key(session_id), json.dumps(data))
 

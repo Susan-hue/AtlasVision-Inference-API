@@ -13,19 +13,33 @@ from arq import Worker
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from app.api.auth import key_id
 from app.api.main import create_app
 from app.core.config import ApiSettings, WorkerSettings
 from app.core.heartbeat import WORKERS_KEY
 from app.core.redis import create_redis
-from app.core.schemas import Heartbeat, WorkerState
+from app.core.schemas import Heartbeat, Owner, WorkerState
 from app.worker.jobs import run_chat_job
 from app.worker.main import worker_options
 
 TEST_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
+TEST_KEY = "test-key-0123456789"
+OTHER_KEY = "other-key-0123456789"
+
+
+TEST_OWNER = Owner(key_id=key_id(TEST_KEY))
 
 
 def make_api_settings(**overrides: Any) -> ApiSettings:
-    return ApiSettings(_env_file=None, **{"redis_url": TEST_REDIS_URL, **overrides})
+    defaults: dict[str, Any] = {"redis_url": TEST_REDIS_URL, "api_keys": [TEST_KEY, OTHER_KEY]}
+    return ApiSettings(_env_file=None, **{**defaults, **overrides})
+
+
+def api_client(
+    settings: ApiSettings | None = None, *, key: str | None = TEST_KEY, **kwargs: Any
+) -> TestClient:
+    headers = {"X-API-Key": key} if key is not None else {}
+    return TestClient(create_app(settings or make_api_settings()), headers=headers, **kwargs)
 
 
 def make_worker_settings(**overrides: Any) -> WorkerSettings:
@@ -71,8 +85,10 @@ def sync_redis() -> Iterator[redis.Redis]:
 
 @pytest.fixture
 def publish_heartbeat(sync_redis: redis.Redis):
-    def publish(state: WorkerState = WorkerState.READY, *, age: float = 0.0) -> None:
-        beat = Heartbeat(worker_id="test-worker", state=state, updated_at=time.time() - age)
+    def publish(state: WorkerState = WorkerState.READY, *, age: float = 0.0, **fields: Any) -> None:
+        beat = Heartbeat(
+            worker_id="test-worker", state=state, updated_at=time.time() - age, **fields
+        )
         sync_redis.hset(WORKERS_KEY, beat.worker_id, beat.model_dump_json())
 
     return publish
@@ -80,7 +96,7 @@ def publish_heartbeat(sync_redis: redis.Redis):
 
 @pytest.fixture
 def client(sync_redis: redis.Redis) -> Iterator[TestClient]:
-    with TestClient(create_app(make_api_settings())) as test_client:
+    with api_client() as test_client:
         yield test_client
 
 
@@ -89,11 +105,12 @@ def submit_chat(
     *,
     image: bytes | None = None,
     content_type: str = "image/png",
+    headers: dict[str, str] | None = None,
     **fields: str,
 ) -> Any:
     data = {"question": "What is this?", "lang": "yo", "question_lang": "en", **fields}
     files = {"image": ("photo", image if image is not None else image_bytes(), content_type)}
-    return client.post("/v1/jobs/chat", data=data, files=files)
+    return client.post("/v1/jobs/chat", data=data, files=files, headers=headers)
 
 
 def run_job(job_id: str, model: Any, settings: WorkerSettings | None = None) -> None:

@@ -21,8 +21,10 @@ def test_api_defaults() -> None:
     assert settings.session_ttl == 24 * 60 * 60
     assert settings.max_session_turns == 8
     assert settings.max_image_bytes == 4 * 1024 * 1024
-    assert settings.rate_limit == 60
-    assert settings.rate_limit_poll == 1200
+    assert settings.rate_limit_submit_per_client == 10
+    assert settings.rate_limit_submit_per_key == 120
+    assert settings.rate_limit_read_per_client == 120
+    assert settings.rate_limit_read_per_key == 3000
     assert settings.api_keys == []
     assert settings.cors_origins == []
     assert settings.log_content is False
