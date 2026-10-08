@@ -73,9 +73,19 @@ const headers = {
 | `RATE_LIMIT_READ_PER_CLIENT` | 120 | every other endpoint per visitor (polling every 2 s = 30) |
 | `RATE_LIMIT_READ_PER_KEY` | 3000 | every other endpoint across all visitors |
 
-Over a limit: `429 rate_limited` with `Retry-After`. More than `MAX_QUEUE_DEPTH` queued or
-running jobs: `503 queue_full` with `Retry-After`. Bodies over `MAX_IMAGE_MB` + 64 KB:
-`413 request_too_large`, rejected before the upload is read.
+Limits use a sliding window: the previous minute's count still applies, weighted by how much
+of the current minute is left, so a burst at a minute boundary cannot double the limit.
+Rejected requests count too. Over a limit: `429 rate_limited` with `Retry-After`, the number
+of seconds until the next request would be accepted (up to 120). More than
+`MAX_QUEUE_DEPTH` queued or running jobs: `503 queue_full` with `Retry-After`.
+
+The API checks the key before reading any request body, so only valid key holders can make
+it read an upload. Bodies over `MAX_IMAGE_MB` + 64 KB get `413 request_too_large`, rejected
+unread when `Content-Length` declares it, otherwise as soon as the stream passes the limit.
+`/docs` and `/openapi.json` also need the key.
+
+`GET /v1/model` returns only `state` (`ready`, `loading`, `failed`, `unavailable`), `stage`
+and `supported_languages`; full model details are in the worker log.
 
 ## Sessions (follow-up questions)
 
