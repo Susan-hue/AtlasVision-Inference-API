@@ -1,8 +1,6 @@
-# Direct dependencies of the API image. No torch, no model code.
-# Compile to api.txt with `make lock` (see README); never edit api.txt by hand.
 fastapi>=0.143
 uvicorn[standard]>=0.54
 pydantic>=2.14
 pydantic-settings>=2.15
-# arq (added with the worker) requires redis<6, so stay on the 5.x line.
+# arq requires redis<6.
 redis[hiredis]>=5.3,<6

@@ -1,9 +1,4 @@
-"""FastAPI application factory.
-
-Run with `uvicorn app.api.main:create_app --factory`. Using a factory (rather than a
-module-level `app`) means importing this module has no side effects, and tests can build
-an app with their own settings.
-"""
+"""Run with `uvicorn app.api.main:create_app --factory`."""
 
 from __future__ import annotations
 
@@ -25,7 +20,6 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # One connection pool per process, created inside the server's event loop.
         app.state.redis = create_redis(settings.redis_url)
         try:
             yield

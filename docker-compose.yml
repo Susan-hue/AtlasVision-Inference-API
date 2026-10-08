@@ -1,10 +1,8 @@
-# Local development stack. `make up` starts redis + api; `make test` runs the test suite.
 name: atlasvision
 
 services:
   redis:
     image: redis:7.4-alpine
-    # Local dev only: no persistence. Jobs, images and sessions are all short-lived.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "127.0.0.1:6379:6379"
@@ -39,9 +37,7 @@ services:
       timeout: 3s
       retries: 3
 
-  # Runs only on demand (`make test` / `make lint`). Uses Redis DB 15 so tests never
-  # touch the dev data in DB 0. Deliberately has no env_file: tests must not depend on
-  # whatever is in your .env.
+  # No env_file on purpose: tests must not depend on your .env.
   tests:
     profiles: ["test"]
     build:

@@ -1,5 +1,3 @@
-"""Liveness/readiness. Unauthenticated, so it reports only up/down, nothing internal."""
-
 from __future__ import annotations
 
 from typing import Annotated, Literal

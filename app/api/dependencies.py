@@ -1,5 +1,3 @@
-"""FastAPI dependencies. Routes ask for these instead of reaching into globals."""
-
 from __future__ import annotations
 
 from fastapi import Request

@@ -1,4 +1,3 @@
-# All commands run in Docker so the host Python version doesn't matter.
 PY311   := python:3.11-slim
 COMPILE := uv pip compile -q --python-version 3.11 --upgrade
 

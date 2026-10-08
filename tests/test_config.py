@@ -8,7 +8,6 @@ from app.core.config import ApiSettings, WorkerSettings
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start every test with none of our settings in the environment."""
     names = set(ApiSettings.model_fields) | set(WorkerSettings.model_fields)
     for name in names:
         monkeypatch.delenv(name.upper(), raising=False)
