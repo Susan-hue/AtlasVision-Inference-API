@@ -14,12 +14,20 @@ from testatlasvision import UnsupportedLanguageError, normalize_language
 
 from app.api.dependencies import get_redis, get_settings
 from app.api.errors import ApiError
+from app.api.routes.sessions import valid_session_id
 from app.core.config import ApiSettings
 from app.core.heartbeat import accepts_jobs, model_state, read_heartbeats
 from app.core.images import ImageRejected, check_image
 from app.core.jobs import as_seen_now, create_job, delete_job, load_job, utcnow
 from app.core.queue import CHAT_JOB, enqueue
 from app.core.schemas import ChatOutput, ChatParams, JobError, JobRecord, JobStatus, Lang
+from app.core.sessions import (
+    acquire_lock,
+    queued_lock_ttl,
+    release_lock,
+    replace_lock,
+    touch_session,
+)
 
 router = APIRouter(prefix="/v1/jobs", tags=["jobs"])
 
@@ -37,6 +45,7 @@ class JobAccepted(BaseModel):
 class JobView(BaseModel):
     job_id: str
     status: JobStatus
+    session_id: str | None
     created_at: datetime
     finished_at: datetime | None
     result: ChatOutput | None
@@ -52,6 +61,7 @@ async def submit_chat(
     question: Annotated[str, Form()],
     lang: Annotated[str, Form()],
     question_lang: Annotated[str, Form()],
+    session_id: Annotated[str | None, Form()] = None,
 ) -> JobAccepted:
     params = ChatParams(
         question=_question(question, settings),
@@ -61,17 +71,28 @@ async def submit_chat(
     )
     if params.question_lang not in ("en", params.lang):
         raise ApiError(422, "invalid_question_lang", 'question_lang must be "en" or equal to lang.')
+    session_id = (session_id or "").strip() or None
+    if session_id is not None:
+        valid_session_id(session_id)
     await _require_worker(redis, settings)
     data = await _read_image(image, settings)
 
     record = JobRecord(
-        job_id=uuid.uuid4().hex, status=JobStatus.QUEUED, created_at=utcnow(), params=params
+        job_id=uuid.uuid4().hex,
+        status=JobStatus.QUEUED,
+        session_id=session_id,
+        created_at=utcnow(),
+        params=params,
     )
-    await create_job(redis, record, data, settings)
+    if session_id is not None:
+        await _lock_session(redis, settings, session_id, record.job_id)
     try:
+        await create_job(redis, record, data, settings)
         await enqueue(redis, CHAT_JOB, record.job_id, expires=settings.image_ttl)
     except BaseException:
         await delete_job(redis, record.job_id)
+        if session_id is not None:
+            await release_lock(redis, session_id, record.job_id)
         raise
 
     response.headers["Location"] = f"/v1/jobs/{record.job_id}"
@@ -82,7 +103,7 @@ async def submit_chat(
 async def get_job(job_id: str, redis: RedisDep, settings: SettingsDep) -> JobView:
     record = await load_job(redis, job_id) if JOB_ID.fullmatch(job_id) else None
     if record is None:
-        raise ApiError(404, "job_not_found", "Job not found or expired.")
+        raise ApiError.from_code("job_not_found")
     record = as_seen_now(record, settings, utcnow())
     return JobView.model_validate(record, from_attributes=True)
 
@@ -109,16 +130,34 @@ def _language(value: str, field: str) -> Lang:
         ) from None
 
 
+async def _lock_session(redis: Redis, settings: ApiSettings, session_id: str, job_id: str) -> None:
+    if not await touch_session(redis, session_id, settings.session_ttl):
+        raise ApiError.from_code("session_not_found")
+    ttl = queued_lock_ttl(settings)
+    holder = await acquire_lock(redis, session_id, job_id, ttl)
+    if holder is None:
+        return
+    # A holder that can no longer finish (expired in the queue, lost worker) must not
+    # block the conversation until its lock times out.
+    if await _cannot_finish(redis, settings, holder) and await replace_lock(
+        redis, session_id, holder, job_id, ttl
+    ):
+        return
+    raise ApiError.from_code("session_busy", extra={"job_id": holder})
+
+
+async def _cannot_finish(redis: Redis, settings: ApiSettings, job_id: str) -> bool:
+    record = await load_job(redis, job_id)
+    if record is None:
+        return True
+    return as_seen_now(record, settings, utcnow()).status in (JobStatus.DONE, JobStatus.FAILED)
+
+
 async def _require_worker(redis: Redis, settings: ApiSettings) -> None:
     beats = await read_heartbeats(redis)
     state = model_state(beats, now=time.time(), stale_after=settings.heartbeat_stale_after)
     if not accepts_jobs(state):
-        raise ApiError(
-            503,
-            "model_unavailable",
-            "The model is not available. Try again later.",
-            headers={"Retry-After": "30"},
-        )
+        raise ApiError.from_code("model_unavailable", headers={"Retry-After": "30"})
 
 
 async def _read_image(image: UploadFile, settings: ApiSettings) -> bytes:

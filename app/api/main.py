@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import install_error_handlers
-from app.api.routes import health, jobs
+from app.api.routes import health, jobs, sessions
 from app.core.config import ApiSettings, get_api_settings
 from app.core.logging import configure_logging
 from app.core.redis import create_redis
@@ -41,4 +41,5 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(jobs.router)
+    app.include_router(sessions.router)
     return app
