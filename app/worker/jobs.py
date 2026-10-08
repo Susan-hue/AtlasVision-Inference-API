@@ -6,27 +6,29 @@ import time
 from typing import Any
 
 from redis.asyncio import Redis
-from testatlasvision import GenerationConfig
+from testatlasvision import GenerationConfig, Session
 
 from app.core.config import WorkerSettings
+from app.core.errors import code_for, job_error
 from app.core.jobs import delete_image, load_image, load_job, running_ttl, save_job, utcnow
-from app.core.schemas import ChatOutput, JobError, JobRecord, JobStatus
+from app.core.schemas import ChatOutput, JobRecord, JobStatus
+from app.core.sessions import (
+    load_session,
+    refresh_lock,
+    release_lock,
+    running_lock_ttl,
+    save_session,
+    trim_history,
+)
 from app.worker.model import ChatModel
 
 logger = logging.getLogger(__name__)
 
 
-class ImageExpired(Exception):
-    pass
-
-
-def job_error(exc: BaseException) -> JobError:
-    # Phase 3 replaces this with the full SDK error mapping.
-    if isinstance(exc, ImageExpired):
-        return JobError(
-            code="image_expired", message="The uploaded image expired before the job ran."
-        )
-    return JobError(code="internal_error", message="The job failed.")
+class JobFailure(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 async def run_chat_job(ctx: dict[str, Any], job_id: str) -> None:
@@ -44,35 +46,47 @@ async def run_chat_job(ctx: dict[str, Any], job_id: str) -> None:
     await save_job(redis, record, ttl=running_ttl(settings))
     started = time.monotonic()
     try:
-        record = await _chat(redis, model, record)
+        record = await _chat(redis, settings, model, record)
     except asyncio.CancelledError:
         # arq cancels the coroutine on timeout or shutdown. The generation thread itself
         # cannot be cancelled and finishes in the background.
-        error = JobError(code="job_interrupted", message="The job was interrupted.")
-        await _finish(redis, settings, _failed(record, error), started)
+        record = _failed(record, "job_interrupted")
         raise
     finally:
         await delete_image(redis, job_id)
-    await _finish(redis, settings, record, started)
+        # Release before publishing the result, so a client that sees "done" can ask next.
+        if record.session_id is not None:
+            await release_lock(redis, record.session_id, job_id)
+        await _finish(redis, settings, record, started)
 
 
-async def _chat(redis: Redis, model: ChatModel, record: JobRecord) -> JobRecord:
+async def _chat(
+    redis: Redis, settings: WorkerSettings, model: ChatModel, record: JobRecord
+) -> JobRecord:
     params = record.params
     try:
+        session = await _open_session(redis, settings, record)
         image = await load_image(redis, record.job_id)
         if image is None:
-            raise ImageExpired
+            raise JobFailure("image_expired")
         result = await asyncio.to_thread(
             model.chat,
             image,
             params.question,
             lang=params.lang,
+            session=session,
             translate_question=params.question_lang != "en",
             config=GenerationConfig(max_new_tokens=params.max_new_tokens),
         )
+        if session is not None:
+            trim_history(session, settings.max_session_turns)
+            await save_session(redis, session, settings.session_ttl)
     except Exception as exc:
-        logger.warning("Job %s failed: %s", record.job_id, type(exc).__name__, exc_info=True)
-        return _failed(record, job_error(exc))
+        code = exc.code if isinstance(exc, JobFailure) else code_for(exc)
+        logger.warning(
+            "Job %s failed (%s): %s", record.job_id, code, type(exc).__name__, exc_info=True
+        )
+        return _failed(record, code)
     output = ChatOutput(
         answer=result.answer,
         english_answer=result.english_answer,
@@ -82,8 +96,22 @@ async def _chat(redis: Redis, model: ChatModel, record: JobRecord) -> JobRecord:
     return record.model_copy(update={"status": JobStatus.DONE, "result": output})
 
 
-def _failed(record: JobRecord, error: JobError) -> JobRecord:
-    return record.model_copy(update={"status": JobStatus.FAILED, "error": error})
+async def _open_session(
+    redis: Redis, settings: WorkerSettings, record: JobRecord
+) -> Session | None:
+    if record.session_id is None:
+        return None
+    session = await load_session(redis, record.session_id)
+    if session is None:
+        raise JobFailure("session_not_found")
+    if not await refresh_lock(redis, record.session_id, record.job_id, running_lock_ttl(settings)):
+        raise JobFailure("session_busy")
+    trim_history(session, settings.max_session_turns)
+    return session
+
+
+def _failed(record: JobRecord, code: str) -> JobRecord:
+    return record.model_copy(update={"status": JobStatus.FAILED, "error": job_error(code)})
 
 
 async def _finish(
