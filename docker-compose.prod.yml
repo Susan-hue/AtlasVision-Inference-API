@@ -64,8 +64,9 @@ services:
       target: runtime
     env_file: .env
     environment: *shared-env
+    # Localhost only by default: put an HTTPS reverse proxy in front, or set API_BIND.
     ports:
-      - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     depends_on:
       redis:
         condition: service_healthy

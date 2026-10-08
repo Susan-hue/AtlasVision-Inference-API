@@ -38,10 +38,11 @@ def test_shared_settings_reach_both_services_with_the_code_defaults(prod: dict[s
     assert prod["services"]["worker"]["environment"] == shared
 
 
-def test_only_the_api_publishes_a_port(prod: dict[str, Any]) -> None:
+def test_only_the_api_publishes_a_port_on_localhost_by_default(prod: dict[str, Any]) -> None:
     published = {name for name, service in prod["services"].items() if service.get("ports")}
 
     assert published == {"api"}
+    assert prod["services"]["api"]["ports"] == ["${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"]
 
 
 def test_worker_reads_only_its_own_env_file(prod: dict[str, Any]) -> None:
@@ -72,7 +73,7 @@ def test_gpu_lock_is_hashed_on_transformers_4_and_free_of_torchao() -> None:
 
     assert pins["testatlasvision"] == "0.1.0"
     assert pins["transformers"].startswith("4.")
-    assert "torch" in pins
+    assert pins["torch"].endswith("+cu128")
     assert "bitsandbytes" in pins
     assert "torchao" not in pins
     assert lock.count("--hash=sha256:") >= len(pins)
