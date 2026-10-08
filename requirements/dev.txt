@@ -11,17 +11,13 @@ annotated-types==0.8.0
 anyio==4.15.1
     # via
     #   -c requirements/api.txt
-    #   httpx
+    #   httpx2
     #   starlette
     #   watchfiles
 async-timeout==5.0.1
     # via
     #   -c requirements/api.txt
     #   redis
-certifi==2026.7.22
-    # via
-    #   httpcore
-    #   httpx
 click==8.5.0
     # via
     #   -c requirements/api.txt
@@ -33,25 +29,25 @@ fastapi==0.143.0
 h11==0.16.0
     # via
     #   -c requirements/api.txt
-    #   httpcore
+    #   httpcore2
     #   uvicorn
 hiredis==3.4.2
     # via
     #   -c requirements/api.txt
     #   redis
-httpcore==1.0.9
-    # via httpx
+httpcore2==2.13.1
+    # via httpx2
 httptools==0.8.0
     # via
     #   -c requirements/api.txt
     #   uvicorn
-httpx==0.28.1
+httpx2==2.13.1
     # via -r requirements/dev.in
 idna==3.20
     # via
     #   -c requirements/api.txt
     #   anyio
-    #   httpx
+    #   httpx2
 iniconfig==2.3.1
     # via pytest
 opentelemetry-api==1.45.1
@@ -103,11 +99,16 @@ starlette==1.7.0
     # via
     #   -c requirements/api.txt
     #   fastapi
+truststore==0.10.4
+    # via
+    #   httpcore2
+    #   httpx2
 typing-extensions==4.16.0
     # via
     #   -c requirements/api.txt
     #   anyio
     #   fastapi
+    #   httpx2
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
