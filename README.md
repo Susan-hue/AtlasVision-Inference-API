@@ -288,11 +288,12 @@ specific to a cloud provider.
 ### What you need
 
 - **Linux, x86_64.** The commands below are for Ubuntu 22.04 or 24.04.
-- **An NVIDIA GPU, Turing (T4) or newer.** The language model has about 8 billion parameters
-  (see the [N-ATLaS model card](https://huggingface.co/NCAIR1/N-ATLaS)): full precision needs a
-  24 GB GPU; 4-bit (`LOAD_IN_4BIT=true`) fits a 16 GB GPU. Left unset, the SDK picks 4-bit
+- **An NVIDIA GPU, Turing (T4) or newer.** N-ATLaS is a Llama-3 8B model (see the
+  [model card](https://huggingface.co/NCAIR1/N-ATLaS)) that needs about 18 GB of GPU memory in
+  FP16/BF16 and about 8 GB in 4-bit. So full precision needs a 24 GB GPU, and 4-bit
+  (`LOAD_IN_4BIT=true`) runs on a 12-16 GB GPU such as a T4. Left unset, the SDK picks 4-bit
   below 20 GB.
-- **NVIDIA driver 580 or newer.** The worker image uses PyTorch built for CUDA 13.0.
+- **NVIDIA driver 570 or newer.** The worker image uses PyTorch's CUDA 12.8 build.
 - **About 50 GB of free disk:** the worker image (~10 GB), the model weights (~17 GB) and build
   caches.
 - **A Hugging Face account that has been granted access to
@@ -302,7 +303,7 @@ specific to a cloud provider.
 ### 1. NVIDIA driver
 
 ```bash
-nvidia-smi        # shows the GPU and "Driver Version"; it must be 580 or newer
+nvidia-smi        # shows the GPU and "Driver Version"; it must be 570 or newer
 ```
 
 If the command is missing or the driver is older, install a current one (Ubuntu:
@@ -332,7 +333,7 @@ sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 
-docker run --rm --gpus all nvidia/cuda:13.0.3-base-ubuntu24.04 nvidia-smi   # must show the GPU
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi   # must show the GPU
 ```
 
 ### 4. Code and Hugging Face token
@@ -405,19 +406,21 @@ ATLAS_API_KEY=$API_KEY python3 scripts/smoke_test.py --image photo.jpg
 ```
 
 It waits for the model (up to 30 minutes), then asks an English question with a Yoruba
-answer, an Igbo question, a Hausa question and a two-turn session follow-up, printing each
-answer and how long it took. It ends with `4/4 cases passed` and exit code 0, or prints what
-failed and exits 1. Igbo and Hausa questions take about three times as long as English ones
-(translate, answer, translate back).
+answer, a Yoruba, an Igbo and a Hausa question, and a two-turn session follow-up, printing
+each answer and how long it took. It ends with `5/5 cases passed` and exit code 0, or prints
+what failed and exits 1. Questions in Yoruba, Igbo or Hausa take about three times as long as
+English ones (translate, answer, translate back).
 
 ### 9. Expose it securely
 
-Only the API publishes a port (`API_PORT`, default 8000); Redis is reachable only inside
-Docker. Before pointing the Vercel route at the machine:
+Only the API publishes a port, and by default only on `127.0.0.1:8000`, so nothing is
+reachable from outside the machine yet; Redis is reachable only inside Docker. Before pointing
+the Vercel route at the machine:
 
-- Put HTTPS in front of the API: a reverse proxy (Caddy, nginx) on the same machine, or your
-  provider's load balancer. With a local proxy, set `API_BIND=127.0.0.1` in `.env` so port
-  8000 is not reachable from outside.
+- Put HTTPS in front of the API. With a reverse proxy (Caddy, nginx) on the same machine,
+  keep the default and proxy to `127.0.0.1:8000`. With your provider's load balancer instead,
+  set `API_BIND=0.0.0.0` (and `API_PORT` if needed) in `.env` and allow only the load
+  balancer to reach that port.
 - Firewall everything except HTTPS (443) and SSH.
 - Set the route's `ATLAS_API_URL` to the HTTPS address and `ATLAS_API_KEY` to the key above.
 
@@ -444,7 +447,7 @@ sessions.
 | `Model access denied (model_auth_error)` | `HF_TOKEN` missing, invalid or expired | Fix `HF_TOKEN` in `.env.worker`, then `dc up -d worker`. |
 | `Model access denied (model_access_denied)` | The token's account has no access to N-ATLaS, or the fine-grained token lacks the gated-repos permission | Request access or fix the token, then `dc up -d --force-recreate worker`. |
 | `Exiting: model failed to load (model_load_error)`, then restarts | Download, network or memory problem | Read the log line above it. Docker retries with a growing delay. On `CUDA out of memory`, set `LOAD_IN_4BIT=true`. |
-| `unsatisfied condition: cuda>=13.0` when starting | NVIDIA driver older than 580 | Upgrade the driver and reboot. |
+| `unsatisfied condition: cuda>=12.8` when starting | NVIDIA driver older than 570 | Upgrade the driver and reboot. |
 | `could not select device driver "nvidia"` | NVIDIA Container Toolkit missing or not configured | Repeat step 3. |
 
 For the two "access denied" cases the worker deliberately does **not** exit: retrying cannot fix
@@ -485,9 +488,14 @@ test checks that importing the API and worker never imports torch.
 
 The GPU worker image (`docker/worker.Dockerfile`, target `gpu`) installs the SDK with all its
 dependencies from `requirements/worker-gpu.txt` (hash-pinned; `make lock-gpu` re-resolves it
-from metadata only, without downloading torch): PyTorch 2.14 built for CUDA 13.0, transformers
-4.57 (the 4.x series the SDK was written against), and bitsandbytes for `LOAD_IN_4BIT`. The
-SDK README tells Colab users to uninstall `torchao`, which breaks transformers' model loading
+from metadata only, without downloading torch):
+
+- PyTorch 2.11 built for CUDA 12.8, taken from PyTorch's own index with uv's
+  `--torch-backend`; every other package comes from PyPI.
+- transformers 4.57, the 4.x series the SDK was written against.
+- bitsandbytes, for `LOAD_IN_4BIT`.
+
+The SDK README tells Colab users to uninstall `torchao`, which breaks transformers' model loading
 when present; nothing here depends on it, and the image build fails if it ever appears.
 
 ### Tests
