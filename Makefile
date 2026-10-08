@@ -21,11 +21,14 @@ upgrade:  ## Re-resolve every pin to the latest allowed version
 
 # Separate from `lock`: resolving torch and its CUDA wheels is slow. Only metadata is read;
 # nothing is installed. Hashes are pinned because this lock ships to production GPUs.
+# --torch-backend takes torch (and triton) from PyTorch's CUDA 12.8 index, which needs only
+# driver 570+; every other package still comes from PyPI.
 lock-gpu:  ## Pin the GPU worker's requirements (torch, transformers, the SDK)
 	docker run --rm -v "$(CURDIR)":/src -w /src -v atlasvision-pip-cache:/root/.cache \
 		-e PIP_DISABLE_PIP_VERSION_CHECK=1 -e PIP_ROOT_USER_ACTION=ignore $(PY311) sh -c '\
 		pip install -q "uv==0.12.*" && \
-		$(COMPILE) --generate-hashes requirements/worker-gpu.in -o requirements/worker-gpu.txt && \
+		$(COMPILE) --generate-hashes --torch-backend cu128 --emit-index-annotation \
+			requirements/worker-gpu.in -o requirements/worker-gpu.txt && \
 		chown $(shell id -u):$(shell id -g) requirements/worker-gpu.txt'
 
 up:  ## Start the local stack

@@ -21,8 +21,9 @@ ENV USE_FAKE_MODEL=true
 CMD ["python", "-m", "app.worker"]
 
 # Real model. Built on the GPU host only: torch and its CUDA libraries are several GB.
-# The torch wheels bundle CUDA 13.0 (driver 580 or newer); this base adds no CUDA libraries.
-FROM nvidia/cuda:13.0.3-base-ubuntu24.04 AS gpu
+# torch is PyTorch's CUDA 12.8 build (driver 570 or newer) and bundles its CUDA libraries;
+# this base adds none.
+FROM nvidia/cuda:12.8.1-base-ubuntu24.04 AS gpu
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,15 +34,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/opt/venv/bin:$PATH \
     HF_HOME=/models/hf \
     USE_FAKE_MODEL=false
-# Make the NVIDIA runtime refuse to start the container on a driver too old for CUDA 13.0.
+# Make the NVIDIA runtime refuse to start the container on a driver too old for CUDA 12.8.
 # The base image's default also admits older data-centre drivers through forward-compatibility
 # libraries, which this image does not ship.
-ENV NVIDIA_REQUIRE_CUDA="cuda>=13.0"
+ENV NVIDIA_REQUIRE_CUDA="cuda>=12.8"
 WORKDIR /srv
 RUN uv venv --python 3.11 /opt/venv
 COPY requirements/worker-gpu.txt requirements/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --require-hashes -r requirements/worker-gpu.txt
+    uv pip install --torch-backend cu128 --require-hashes -r requirements/worker-gpu.txt
 # The SDK README's Colab notes uninstall torchao: when present, transformers imports it and
 # version mismatches break model loading. Nothing here depends on it; keep it that way.
 RUN python -c "import importlib.util as u, sys; sys.exit('torchao must not be installed' if u.find_spec('torchao') else 0)"
