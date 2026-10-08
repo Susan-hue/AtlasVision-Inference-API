@@ -19,6 +19,7 @@ polling, sessions, every error code and image preparation.
 - [API overview](#api-overview)
 - [Security](#security)
 - [Operations](#operations)
+- [Deploying to a GPU machine](#deploying-to-a-gpu-machine)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 
@@ -151,6 +152,7 @@ make down      # stop everything
 | `make format` | Format with ruff, then apply ruff's automatic fixes. |
 | `make lock` | Pin requirements newly added to `requirements/*.in`, keeping existing pins. |
 | `make upgrade` | Re-resolve every pin to the newest allowed version. |
+| `make lock-gpu` | Pin the GPU worker's requirements (torch, transformers, the SDK). |
 
 ## Configuration
 
@@ -263,15 +265,191 @@ inside a job come back in a `200` poll with `"status": "failed"`.
 - **Scaling:** one worker per GPU (`max_jobs=1`; the SDK serialises generation anyway). Add
   GPUs by adding workers; add API replicas freely.
 - **Health:** `/health` for load balancers (API + Redis); `GET /v1/model` for model readiness.
-  The worker logs the full model details when ready, and the reason if loading fails (then it
-  exits with code 1; the container restarts it).
+  The worker logs the full model details when ready, and the reason if loading fails. After
+  an auth or gated-access failure it stays up reporting `failed` (retrying cannot help); after
+  any other failure it exits with code 1 and is restarted.
 - **Timeouts:** `JOB_TIMEOUT` fails a job as `job_interrupted`, but a generation already
   running on the GPU cannot be stopped; it finishes in the background and the next job waits
   for it.
 - **Redis memory:** images are held in Redis while queued. Worst case is about
   `MAX_QUEUE_DEPTH` x `MAX_IMAGE_MB` (100 x 4 MB = 400 MB); size Redis accordingly or lower
-  either setting. Redis needs no persistence.
+  either setting. Production Redis (`docker-compose.prod.yml`) has a password, a
+  `REDIS_MAXMEMORY` limit (default 1 GB) with `volatile-lru` eviction (only keys with a TTL,
+  idle sessions and old results first; never the queue or heartbeats) and append-only
+  persistence, so sessions survive restarts.
 - **Redis version:** developed and tested against Redis 7.4.
+
+## Deploying to a GPU machine
+
+From a fresh Linux machine with an NVIDIA GPU to a working API, using
+`docker-compose.prod.yml` (API, Redis and the GPU worker on one machine). Nothing here is
+specific to a cloud provider.
+
+### What you need
+
+- **Linux, x86_64.** The commands below are for Ubuntu 22.04 or 24.04.
+- **An NVIDIA GPU, Turing (T4) or newer.** The language model has about 8 billion parameters
+  (see the [N-ATLaS model card](https://huggingface.co/NCAIR1/N-ATLaS)): full precision needs a
+  24 GB GPU; 4-bit (`LOAD_IN_4BIT=true`) fits a 16 GB GPU. Left unset, the SDK picks 4-bit
+  below 20 GB.
+- **NVIDIA driver 580 or newer.** The worker image uses PyTorch built for CUDA 13.0.
+- **About 50 GB of free disk:** the worker image (~10 GB), the model weights (~17 GB) and build
+  caches.
+- **A Hugging Face account that has been granted access to
+  [NCAIR1/N-ATLaS](https://huggingface.co/NCAIR1/N-ATLaS)** (request it on that page; approval
+  is manual).
+
+### 1. NVIDIA driver
+
+```bash
+nvidia-smi        # shows the GPU and "Driver Version"; it must be 580 or newer
+```
+
+If the command is missing or the driver is older, install a current one (Ubuntu:
+`sudo ubuntu-drivers install`, or your provider's GPU driver image) and reboot.
+
+### 2. Docker Engine
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh     # Docker's official install script
+sudo usermod -aG docker $USER && newgrp docker  # run docker without sudo
+docker compose version                          # must be 2.24 or newer
+```
+
+### 3. NVIDIA Container Toolkit
+
+Lets containers use the GPU. These are NVIDIA's
+[install steps](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+for Ubuntu; check that page if they fail.
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+docker run --rm --gpus all nvidia/cuda:13.0.3-base-ubuntu24.04 nvidia-smi   # must show the GPU
+```
+
+### 4. Code and Hugging Face token
+
+```bash
+git clone https://github.com/Susan-hue/AtlasVision-Inference-API.git
+cd AtlasVision-Inference-API
+```
+
+Create a **fine-grained** token at <https://huggingface.co/settings/tokens> with only *"Read
+access to contents of all public gated repos you can access"*. If the
+`Modularcomputing/AtlasVision` repo is private, also give the token read access to it.
+
+### 5. Configuration
+
+```bash
+cp .env.example .env
+cp .env.worker.example .env.worker
+chmod 600 .env .env.worker
+
+secret() { python3 -c "import secrets; print(secrets.token_urlsafe(32))"; }
+API_KEY=$(secret)
+sed -i "s|^API_KEYS=.*|API_KEYS=$API_KEY|" .env
+sed -i "s|^# REDIS_PASSWORD=.*|REDIS_PASSWORD=$(secret)|" .env
+sed -i "s|^HF_TOKEN=.*|HF_TOKEN=hf_your_token_here|" .env.worker
+sed -i "s|^USE_FAKE_MODEL=.*|USE_FAKE_MODEL=false|" .env.worker
+echo "API key for the Vercel route: $API_KEY"
+```
+
+- `.env` holds the API key(s), the Redis password and the settings shared by the API and the
+  worker (TTLs, `JOB_TIMEOUT`, ...). Compose passes the shared ones to the worker; the worker
+  never sees the API keys.
+- `.env.worker` holds `HF_TOKEN`, `USE_FAKE_MODEL=false`, `ATLAS_STAGE` and `LOAD_IN_4BIT`
+  (`true` for GPUs under 24 GB, `false` for 24 GB or more, or unset to let the SDK decide).
+
+### 6. Build and start
+
+```bash
+alias dc='docker compose -f docker-compose.prod.yml'
+dc up -d --build
+```
+
+The first build downloads about 4 GB of Python packages for the worker (PyTorch and its CUDA
+libraries): usually 5-15 minutes on a cloud machine. Later builds reuse the cache.
+
+### 7. First startup
+
+```bash
+dc logs -f worker
+```
+
+The worker logs `Loading model (fake=False)`, downloads the model weights (about 17 GB) into
+the `hf-cache` volume, loads them onto the GPU, and logs `Model ready: {...}` with the device,
+dtype and 4-bit setting. The download takes about 3 minutes at 100 MB/s and about 12 minutes
+at 25 MB/s; loading takes another minute or two. Restarts reuse the cached weights and only
+load.
+
+While it loads, `GET /v1/model` reports `loading` and questions are accepted (they wait):
+
+```bash
+curl -s -H "X-API-Key: $API_KEY" localhost:8000/v1/model   # {"state":"loading",...} then "ready"
+```
+
+### 8. Smoke test
+
+Copy any photo to the machine (JPEG, PNG or WebP under 4 MB), then:
+
+```bash
+ATLAS_API_KEY=$API_KEY python3 scripts/smoke_test.py --image photo.jpg
+```
+
+It waits for the model (up to 30 minutes), then asks an English question with a Yoruba
+answer, an Igbo question, a Hausa question and a two-turn session follow-up, printing each
+answer and how long it took. It ends with `4/4 cases passed` and exit code 0, or prints what
+failed and exits 1. Igbo and Hausa questions take about three times as long as English ones
+(translate, answer, translate back).
+
+### 9. Expose it securely
+
+Only the API publishes a port (`API_PORT`, default 8000); Redis is reachable only inside
+Docker. Before pointing the Vercel route at the machine:
+
+- Put HTTPS in front of the API: a reverse proxy (Caddy, nginx) on the same machine, or your
+  provider's load balancer. With a local proxy, set `API_BIND=127.0.0.1` in `.env` so port
+  8000 is not reachable from outside.
+- Firewall everything except HTTPS (443) and SSH.
+- Set the route's `ATLAS_API_URL` to the HTTPS address and `ATLAS_API_KEY` to the key above.
+
+### Day-to-day operations
+
+| Task | Command |
+|---|---|
+| Follow logs | `dc logs -f api worker` (rotated: 5 x 10 MB per container) |
+| Status | `dc ps`, `nvidia-smi`, `curl -s localhost:8000/health` |
+| Model state | `curl -s -H "X-API-Key: $API_KEY" localhost:8000/v1/model` |
+| Worker heartbeats | `dc exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli hgetall atlas:workers'` |
+| Redis memory | `dc exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli info memory'` |
+| Change settings or keys | edit `.env` / `.env.worker`, then `dc up -d` (recreates what changed) |
+| Update the code | `git pull && dc up -d --build` |
+| Stop | `dc down` (keeps the model cache and Redis data) |
+
+`dc down -v` also deletes the volumes: the next start downloads the model again and loses all
+sessions.
+
+### When the worker fails to start
+
+| Log / symptom | Cause | Fix |
+|---|---|---|
+| `Model access denied (model_auth_error)` | `HF_TOKEN` missing, invalid or expired | Fix `HF_TOKEN` in `.env.worker`, then `dc up -d worker`. |
+| `Model access denied (model_access_denied)` | The token's account has no access to N-ATLaS, or the fine-grained token lacks the gated-repos permission | Request access or fix the token, then `dc up -d --force-recreate worker`. |
+| `Exiting: model failed to load (model_load_error)`, then restarts | Download, network or memory problem | Read the log line above it. Docker retries with a growing delay. On `CUDA out of memory`, set `LOAD_IN_4BIT=true`. |
+| `unsatisfied condition: cuda>=13.0` when starting | NVIDIA driver older than 580 | Upgrade the driver and reboot. |
+| `could not select device driver "nvidia"` | NVIDIA Container Toolkit missing or not configured | Repeat step 3. |
+
+For the two "access denied" cases the worker deliberately does **not** exit: retrying cannot fix
+a wrong token, so instead of restarting in a loop it stays up reporting `failed` (the API
+answers `503 model_unavailable`) until you fix the token and recreate it.
 
 ## Development
 
@@ -284,12 +462,14 @@ app/
   api/       FastAPI app: routes, auth, rate-limit dependencies, middleware, error handlers
   worker/    arq worker: entry point, job function, model loading, heartbeat, FakeAtlasVision
 tests/       pytest suite (runs against a real Redis and a real arq worker, with the fake model)
-docker/      api.Dockerfile (runtime + dev targets), worker.Dockerfile (fake target)
+docker/      api.Dockerfile (runtime + dev targets), worker.Dockerfile (fake + gpu targets)
+scripts/     smoke_test.py (checks a deployed API with the real model)
 docs/        frontend-api.md
 requirements/
   base.in    shared by API and worker (arq, redis, pillow, pydantic-settings)
   api.in     base + FastAPI/uvicorn
   dev.in     api + pytest, httpx, ruff
+  worker-gpu.in  base + the SDK with torch etc. (GPU image)
   sdk.txt    testatlasvision, hash-pinned, installed with --no-deps
 ```
 
@@ -301,8 +481,14 @@ the `*.txt` files by hand.
 
 The SDK declares torch as a dependency, but the modules the API imports never load it, so the
 API and fake worker install it with `--no-deps` from the hash-pinned `requirements/sdk.txt`. A
-test checks that importing the API and worker never imports torch. The GPU worker image (with
-torch and the SDK's full dependencies) is not built yet.
+test checks that importing the API and worker never imports torch.
+
+The GPU worker image (`docker/worker.Dockerfile`, target `gpu`) installs the SDK with all its
+dependencies from `requirements/worker-gpu.txt` (hash-pinned; `make lock-gpu` re-resolves it
+from metadata only, without downloading torch): PyTorch 2.14 built for CUDA 13.0, transformers
+4.57 (the 4.x series the SDK was written against), and bitsandbytes for `LOAD_IN_4BIT`. The
+SDK README tells Colab users to uninstall `torchao`, which breaks transformers' model loading
+when present; nothing here depends on it, and the image build fails if it ever appears.
 
 ### Tests
 
@@ -348,7 +534,7 @@ slow connection this takes several minutes (we measured 3-4 minutes per image at
 | `401 unauthorized` | Missing or wrong `X-API-Key`. It must match one of `API_KEYS` exactly. |
 | `401` on `/docs` | The docs need the key too. Use a browser extension that adds `X-API-Key`, or fetch `/openapi.json` with curl. |
 | `503 model_unavailable` | No ready worker. Check `docker compose ps` and `docker compose logs worker`; `GET /v1/model` shows the state. |
-| Worker keeps restarting | The model failed to load; the log line `Model failed to load (...)` says why. With the real model, check `HF_TOKEN` and access to `NCAIR1/N-ATLaS`. |
+| Worker restarts or reports `failed` | The model failed to load; the log line `Model failed to load (...)` says why. See [When the worker fails to start](#when-the-worker-fails-to-start). |
 | `port is already allocated` | Something else uses port 8000 or 6379. Stop it, or change the host port in `docker-compose.yml`. |
 | `env_file ... required` or similar Compose error | Compose is older than 2.24. Update Docker / Compose. |
 | Files created by containers are owned by root | Run `make lock`, `make format` etc. through `make`, which runs containers as your user. |
