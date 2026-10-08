@@ -40,7 +40,8 @@ class SharedSettings(BaseSettings):
     result_ttl: int = Field(default=60 * 60, gt=0)
     session_ttl: int = Field(default=24 * 60 * 60, gt=0)
 
-    # Longest a single job may run before arq gives up on it.
+    # Longest a single job may run before arq gives up on it. A chat job with a non-English
+    # question is three generations (translate question, answer, translate answer back).
     job_timeout: int = Field(default=300, gt=0)
     # Older turns are dropped before each call so prompts don't grow without bound.
     max_session_turns: int = Field(default=8, gt=0)
@@ -64,19 +65,23 @@ class SharedSettings(BaseSettings):
 class ApiSettings(SharedSettings):
     # Client API keys. Kept as SecretStr so they never appear in reprs or logs.
     api_keys: SecretCommaList = []
+    # Empty (the default) disables CORS. The API is meant to be called server to server,
+    # not from browsers.
     cors_origins: CommaList = []
 
-    max_image_mb: float = Field(default=10, gt=0)
+    # Matches Vercel's 4.5 MB request body limit; the frontend resizes images to ~1024 px.
+    max_image_mb: float = Field(default=4, gt=0)
     # Upper bound on max_new_tokens per request. Non-English chat doubles it for the
     # back-translation step, so this also bounds the worst-case latency of a job.
     max_new_tokens: int = Field(default=256, gt=0)
     max_question_chars: int = Field(default=1000, gt=0)
-    max_text_chars: int = Field(default=4000, gt=0)
 
     # Jobs waiting in the queue before new submissions get 503 + Retry-After.
     max_queue_depth: int = Field(default=100, gt=0)
-    # Requests per minute, per API key.
+    # Requests per minute, per API key. Job submissions and polling are limited separately:
+    # every client polls each job every couple of seconds, so polls need far more headroom.
     rate_limit: int = Field(default=60, gt=0)
+    rate_limit_poll: int = Field(default=1200, gt=0)
 
     @field_validator("api_keys", "cors_origins", mode="before")
     @classmethod
