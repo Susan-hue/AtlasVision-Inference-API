@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -18,8 +18,8 @@ router = APIRouter(prefix="/v1", tags=["model"])
 
 class ModelView(BaseModel):
     state: ModelState
-    model: dict[str, Any] | None
-    error_code: str | None
+    stage: str | None
+    supported_languages: dict[str, str] | None
 
 
 @router.get("/model", response_model=ModelView)
@@ -31,11 +31,9 @@ async def model(
     now = time.time()
     beats = await read_heartbeats(redis)
     live = fresh(beats, now=now, stale_after=settings.heartbeat_stale_after)
-    ready = next((b for b in live if b.state is WorkerState.READY), None)
-    failed = next((b for b in live if b.state is WorkerState.FAILED), None)
-    state = model_state(beats, now=now, stale_after=settings.heartbeat_stale_after)
+    info = next((b.model for b in live if b.state is WorkerState.READY and b.model), {})
     return ModelView(
-        state=state,
-        model=ready.model if ready else None,
-        error_code=failed.error_code if failed and state is ModelState.FAILED else None,
+        state=model_state(beats, now=now, stale_after=settings.heartbeat_stale_after),
+        stage=info.get("stage"),
+        supported_languages=info.get("supported_languages"),
     )

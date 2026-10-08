@@ -40,8 +40,9 @@ async def startup(ctx: dict[str, Any]) -> None:
         raise ModelStartupError(code) from exc
 
     ctx["model"] = model
-    await heartbeat.set_state(WorkerState.READY, model_info=model.info().to_dict())
-    logger.info("Model ready")
+    info = model.info().to_dict()
+    await heartbeat.set_state(WorkerState.READY, model_info=info)
+    logger.info("Model ready: %s", info)
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
