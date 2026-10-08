@@ -4,22 +4,30 @@ from fastapi.testclient import TestClient
 
 from app.core.schemas import WorkerState
 
+LANGS = {"en": "English", "ig": "Igbo", "yo": "Yoruba", "ha": "Hausa"}
+
 
 def test_no_worker_is_unavailable(client: TestClient) -> None:
     assert client.get("/v1/model").json() == {
         "state": "unavailable",
-        "model": None,
-        "error_code": None,
+        "stage": None,
+        "supported_languages": None,
     }
 
 
-def test_ready_worker_reports_model_info(client: TestClient, publish_heartbeat) -> None:
-    publish_heartbeat(WorkerState.READY, model={"stage": "2b", "device": "cuda"})
+def test_ready_worker_reports_only_public_details(client: TestClient, publish_heartbeat) -> None:
+    info = {
+        "stage": "2b",
+        "llm": "NCAIR1/N-ATLaS",
+        "device": "cuda:0",
+        "supported_languages": LANGS,
+    }
+    publish_heartbeat(WorkerState.READY, model=info)
 
     assert client.get("/v1/model").json() == {
         "state": "ready",
-        "model": {"stage": "2b", "device": "cuda"},
-        "error_code": None,
+        "stage": "2b",
+        "supported_languages": LANGS,
     }
 
 
@@ -29,13 +37,13 @@ def test_loading_worker(client: TestClient, publish_heartbeat) -> None:
     assert client.get("/v1/model").json()["state"] == "loading"
 
 
-def test_failed_worker_reports_error_code(client: TestClient, publish_heartbeat) -> None:
+def test_failed_worker_hides_the_reason(client: TestClient, publish_heartbeat) -> None:
     publish_heartbeat(WorkerState.FAILED, error_code="model_access_denied")
 
     assert client.get("/v1/model").json() == {
         "state": "failed",
-        "model": None,
-        "error_code": "model_access_denied",
+        "stage": None,
+        "supported_languages": None,
     }
 
 
