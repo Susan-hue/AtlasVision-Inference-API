@@ -4,7 +4,7 @@
     ATLAS_API_KEY=<key> python3 scripts/smoke_test.py --image photo.jpg [--url http://localhost:8000]
 
 Waits until the model is ready, then sends one chat job per case (English question with a
-Yoruba answer, an Igbo question, a Hausa question, a session follow-up), polls each, and prints
+Yoruba answer, a Yoruba, an Igbo and a Hausa question, a session follow-up), polls each, and prints
 the answers and timings. Exits 1 if anything fails. Standard library only, so it runs on the GPU
 host without installing anything.
 """
@@ -36,6 +36,7 @@ class Case:
 CASES = [
     Case("English question, Yoruba answer", "What is in this picture?", "yo", "en"),
     # Sample questions in each language; replace them with your own if you prefer.
+    Case("Yoruba question, Yoruba answer", "Kí ni ó wà nínú àwòrán yìí?", "yo", "yo"),
     Case("Igbo question, Igbo answer", "Kedu ihe dị na foto a?", "ig", "ig"),
     Case("Hausa question, Hausa answer", "Me ke cikin wannan hoton?", "ha", "ha"),
 ]
