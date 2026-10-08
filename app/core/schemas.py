@@ -4,9 +4,18 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 Lang = Literal["en", "ig", "yo", "ha"]
+
+
+class Owner(BaseModel):
+    """Who created a job or session: an API key (by id, never the key) and its visitor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key_id: str
+    client_id: str | None = None
 
 
 class JobStatus(StrEnum):
@@ -39,6 +48,7 @@ class JobRecord(BaseModel):
     job_id: str
     kind: Literal["chat"] = "chat"
     status: JobStatus
+    owner: Owner | None = None
     session_id: str | None = None
     created_at: datetime
     started_at: datetime | None = None

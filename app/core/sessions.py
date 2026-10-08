@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 from testatlasvision import Session
 
 from app.core.config import SharedSettings
-from app.core.schemas import TurnRecord
+from app.core.schemas import Owner, TurnRecord
 
 LOCK_SLACK_SECONDS = 60
 
@@ -60,6 +60,7 @@ class Conversation:
 
     session: Session = field(default_factory=Session)
     turns: list[TurnRecord] = field(default_factory=list)
+    owner: Owner | None = None
 
     @property
     def session_id(self) -> str:
@@ -73,7 +74,11 @@ class Conversation:
         del self.turns[:-max_turns]
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self.session.to_dict(), "turns": [t.model_dump() for t in self.turns]}
+        return {
+            **self.session.to_dict(),
+            "turns": [t.model_dump() for t in self.turns],
+            "owner": self.owner.model_dump() if self.owner is not None else None,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Conversation:
@@ -87,11 +92,12 @@ class Conversation:
             TurnRecord(question=t.question, question_lang="en", lang="en", answer=t.answer)
             for t in history[: len(history) - len(turns)]
         ]
-        return cls(session=session, turns=missing + turns)
+        owner = Owner.model_validate(data["owner"]) if data.get("owner") else None
+        return cls(session=session, turns=missing + turns, owner=owner)
 
 
-async def create_session(redis: Redis, ttl: int) -> Conversation:
-    conversation = Conversation()
+async def create_session(redis: Redis, ttl: int, owner: Owner) -> Conversation:
+    conversation = Conversation(owner=owner)
     await redis.set(
         session_key(conversation.session_id), json.dumps(conversation.to_dict()), ex=ttl
     )
