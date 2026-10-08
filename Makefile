@@ -1,7 +1,7 @@
 PY311   := python:3.11-slim
 COMPILE := uv pip compile -q --python-version 3.11
 
-.PHONY: lock upgrade up down logs test lint format
+.PHONY: lock lock-gpu upgrade up down logs test lint format
 
 define compile
 	docker run --rm -v "$(CURDIR)":/src -w /src -v atlasvision-pip-cache:/root/.cache \
@@ -18,6 +18,15 @@ lock:  ## Pin newly added requirements, keeping existing pins
 
 upgrade:  ## Re-resolve every pin to the latest allowed version
 	$(call compile,--upgrade)
+
+# Separate from `lock`: resolving torch and its CUDA wheels is slow. Only metadata is read;
+# nothing is installed. Hashes are pinned because this lock ships to production GPUs.
+lock-gpu:  ## Pin the GPU worker's requirements (torch, transformers, the SDK)
+	docker run --rm -v "$(CURDIR)":/src -w /src -v atlasvision-pip-cache:/root/.cache \
+		-e PIP_DISABLE_PIP_VERSION_CHECK=1 -e PIP_ROOT_USER_ACTION=ignore $(PY311) sh -c '\
+		pip install -q "uv==0.12.*" && \
+		$(COMPILE) --generate-hashes requirements/worker-gpu.in -o requirements/worker-gpu.txt && \
+		chown $(shell id -u):$(shell id -g) requirements/worker-gpu.txt'
 
 up:  ## Start the local stack
 	docker compose up --build -d

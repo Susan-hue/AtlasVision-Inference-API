@@ -1,0 +1,7 @@
+# GPU worker image: the real SDK with all of its dependencies (torch, transformers, peft,
+# accelerate, bitsandbytes for LOAD_IN_4BIT). Compile with `make lock-gpu`.
+-c base.txt
+-r base.in
+testatlasvision[4bit]==0.1.0
+# The SDK needs >=4.56; stay on 4.x, the series it was written and checked against.
+transformers>=4.56,<5
