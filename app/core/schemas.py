@@ -39,12 +39,18 @@ class JobRecord(BaseModel):
     job_id: str
     kind: Literal["chat"] = "chat"
     status: JobStatus
+    session_id: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
     params: ChatParams
     result: ChatOutput | None = None
     error: JobError | None = None
+
+
+class Turn(BaseModel):
+    question: str
+    answer: str
 
 
 class WorkerState(StrEnum):

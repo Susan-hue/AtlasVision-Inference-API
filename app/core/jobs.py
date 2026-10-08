@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 from redis.asyncio import Redis
 
 from app.core.config import SharedSettings
-from app.core.schemas import JobError, JobRecord, JobStatus
+from app.core.errors import job_error
+from app.core.schemas import JobRecord, JobStatus
 
 # Slack for clock skew between API and worker hosts and for Redis round trips.
 GRACE = timedelta(seconds=30)
@@ -70,15 +71,13 @@ def as_seen_now(record: JobRecord, settings: SharedSettings, now: datetime) -> J
     if record.status is JobStatus.QUEUED:
         deadline = record.created_at + timedelta(seconds=settings.image_ttl) + GRACE
         if now > deadline:
-            return _failed(record, "job_expired", "The job waited too long in the queue.")
+            return _failed(record, "job_expired")
     elif record.status is JobStatus.RUNNING and record.started_at is not None:
         deadline = record.started_at + timedelta(seconds=settings.job_timeout) + GRACE
         if now > deadline:
-            return _failed(record, "worker_lost", "The worker stopped before finishing the job.")
+            return _failed(record, "worker_lost")
     return record
 
 
-def _failed(record: JobRecord, code: str, message: str) -> JobRecord:
-    return record.model_copy(
-        update={"status": JobStatus.FAILED, "error": JobError(code=code, message=message)}
-    )
+def _failed(record: JobRecord, code: str) -> JobRecord:
+    return record.model_copy(update={"status": JobStatus.FAILED, "error": job_error(code)})
