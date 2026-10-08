@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from typing import Any
 
 from arq import func
@@ -9,6 +10,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import WorkerSettings
 from app.core.queue import CHAT_JOB, deserialize, serialize
+from app.core.redis import create_redis
 from app.core.schemas import WorkerState
 from app.worker.heartbeat import HeartbeatPublisher, prune_dead_workers, worker_id
 from app.worker.jobs import run_chat_job
@@ -53,6 +55,29 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     model = ctx.get("model")
     if model is not None:
         await asyncio.to_thread(model.close)
+
+
+async def park(settings: WorkerSettings, code: str, stop: asyncio.Event | None = None) -> None:
+    """Keep reporting a permanent load failure until stopped, instead of exiting.
+
+    Exiting would make Docker restart the worker over and over, re-checking a token that is
+    still wrong. Staying up keeps the "failed" heartbeat fresh, so the API reports why it
+    rejects jobs, until an operator fixes the token and recreates the container.
+    """
+    if stop is None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+    redis = create_redis(settings.redis_url)
+    heartbeat = HeartbeatPublisher(redis, worker_id(), settings.heartbeat_interval)
+    heartbeat.state, heartbeat.error_code = WorkerState.FAILED, code
+    heartbeat.start()
+    try:
+        await stop.wait()
+    finally:
+        await heartbeat.stop(remove=False)
+        await redis.aclose()
 
 
 def worker_options(settings: WorkerSettings) -> dict[str, Any]:

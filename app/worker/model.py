@@ -52,6 +52,10 @@ def load_model(settings: WorkerSettings) -> ChatModel:
     )
 
 
+# Retrying cannot fix these: the token or the account's access to the gated model is wrong.
+PERMANENT_LOAD_ERRORS = frozenset({"model_auth_error", "model_access_denied"})
+
+
 def load_error_code(exc: BaseException) -> str:
     """Code published in the "failed" heartbeat. The API never returns it; it is there for
     anyone inspecting Redis (`HGETALL atlas:workers`). The worker log has the full reason."""
