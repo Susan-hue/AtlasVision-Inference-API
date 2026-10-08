@@ -1,0 +1,57 @@
+# Local development stack. `make up` starts redis + api; `make test` runs the test suite.
+name: atlasvision
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    # Local dev only: no persistence. Jobs, images and sessions are all short-lived.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: runtime
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Runs only on demand (`make test` / `make lint`). Uses Redis DB 15 so tests never
+  # touch the dev data in DB 0. Deliberately has no env_file: tests must not depend on
+  # whatever is in your .env.
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      target: dev
+    environment:
+      REDIS_URL: redis://redis:6379/15
+    volumes:
+      - .:/srv
+    depends_on:
+      redis:
+        condition: service_healthy

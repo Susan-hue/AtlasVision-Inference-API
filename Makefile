@@ -22,10 +22,10 @@ logs:
 	docker compose logs -f
 
 test:  ## Run pytest in the dev image against the compose Redis
-	docker compose run --rm --build tests pytest
+	docker compose run --rm --build --user "$(shell id -u):$(shell id -g)" tests pytest
 
 lint:
-	docker compose run --rm --build tests sh -c 'ruff check . && ruff format --check .'
+	docker compose run --rm --build --user "$(shell id -u):$(shell id -g)" tests sh -c 'ruff check . && ruff format --check .'
 
 format:
-	docker compose run --rm --build tests sh -c 'ruff check --fix . && ruff format .'
+	docker compose run --rm --build --user "$(shell id -u):$(shell id -g)" tests sh -c 'ruff check --fix . && ruff format .'
