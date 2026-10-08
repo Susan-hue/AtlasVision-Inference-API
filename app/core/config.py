@@ -60,6 +60,11 @@ class ApiSettings(SharedSettings):
     rate_limit_read_per_client: int = Field(default=120, gt=0)
     rate_limit_read_per_key: int = Field(default=3000, gt=0)
 
+    # Retry-After seconds sent with these 503 responses.
+    retry_after_model_unavailable: int = Field(default=30, gt=0)
+    retry_after_queue_full: int = Field(default=30, gt=0)
+    retry_after_service_unavailable: int = Field(default=5, gt=0)
+
     @field_validator("api_keys", "cors_origins", mode="before")
     @classmethod
     def _split_lists(cls, value: Any) -> Any:
@@ -76,6 +81,9 @@ class ApiSettings(SharedSettings):
 
 
 class WorkerSettings(SharedSettings):
+    # Worker-only secrets such as HF_TOKEN live in .env.worker, which the API never reads.
+    model_config = SettingsConfigDict(env_file=(".env", ".env.worker"), extra="ignore")
+
     hf_token: SecretStr | None = None
     atlas_stage: Literal["1", "2", "2b"] = "2b"
     # None lets the SDK decide (4-bit below 20 GB of GPU memory).

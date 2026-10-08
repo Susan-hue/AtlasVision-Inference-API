@@ -45,6 +45,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .env.worker
+        required: false
     environment:
       REDIS_URL: redis://redis:6379/0
       USE_FAKE_MODEL: "true"

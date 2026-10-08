@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,12 +18,16 @@ from app.core.config import ApiSettings, get_api_settings
 from app.core.logging import configure_logging
 from app.core.redis import create_redis
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
     settings = settings or get_api_settings()
     configure_logging(settings.log_level)
     if not settings.api_keys:
         raise RuntimeError("API_KEYS is empty: set at least one key; the API refuses to start.")
+    if os.environ.get("HF_TOKEN"):
+        logger.warning("HF_TOKEN is set in the API's environment; it belongs to the worker only.")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
