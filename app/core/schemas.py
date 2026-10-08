@@ -48,9 +48,16 @@ class JobRecord(BaseModel):
     error: JobError | None = None
 
 
-class Turn(BaseModel):
+class TurnRecord(BaseModel):
     question: str
+    question_lang: Lang
+    lang: Lang
     answer: str
+
+
+class TurnView(TurnRecord):
+    english_question: str
+    english_answer: str
 
 
 class WorkerState(StrEnum):

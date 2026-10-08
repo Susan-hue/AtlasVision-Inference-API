@@ -6,19 +6,19 @@ import time
 from typing import Any
 
 from redis.asyncio import Redis
-from testatlasvision import GenerationConfig, Session
+from testatlasvision import GenerationConfig
 
 from app.core.config import WorkerSettings
 from app.core.errors import code_for, job_error
 from app.core.jobs import delete_image, load_image, load_job, running_ttl, save_job, utcnow
-from app.core.schemas import ChatOutput, JobRecord, JobStatus
+from app.core.schemas import ChatOutput, JobRecord, JobStatus, TurnRecord
 from app.core.sessions import (
+    Conversation,
     load_session,
     refresh_lock,
     release_lock,
     running_lock_ttl,
     save_session,
-    trim_history,
 )
 from app.worker.model import ChatModel
 
@@ -65,7 +65,7 @@ async def _chat(
 ) -> JobRecord:
     params = record.params
     try:
-        session = await _open_session(redis, settings, record)
+        conversation = await _open_session(redis, settings, record)
         image = await load_image(redis, record.job_id)
         if image is None:
             raise JobFailure("image_expired")
@@ -74,13 +74,21 @@ async def _chat(
             image,
             params.question,
             lang=params.lang,
-            session=session,
+            session=conversation.session if conversation is not None else None,
             translate_question=params.question_lang != "en",
             config=GenerationConfig(max_new_tokens=params.max_new_tokens),
         )
-        if session is not None:
-            trim_history(session, settings.max_session_turns)
-            await save_session(redis, session, settings.session_ttl)
+        if conversation is not None:
+            conversation.add_turn(
+                TurnRecord(
+                    question=params.question,
+                    question_lang=params.question_lang,
+                    lang=params.lang,
+                    answer=result.answer,
+                )
+            )
+            conversation.trim(settings.max_session_turns)
+            await save_session(redis, conversation, settings.session_ttl)
     except Exception as exc:
         code = exc.code if isinstance(exc, JobFailure) else code_for(exc)
         logger.warning(
@@ -98,16 +106,16 @@ async def _chat(
 
 async def _open_session(
     redis: Redis, settings: WorkerSettings, record: JobRecord
-) -> Session | None:
+) -> Conversation | None:
     if record.session_id is None:
         return None
-    session = await load_session(redis, record.session_id)
-    if session is None:
+    conversation = await load_session(redis, record.session_id)
+    if conversation is None:
         raise JobFailure("session_not_found")
     if not await refresh_lock(redis, record.session_id, record.job_id, running_lock_ttl(settings)):
         raise JobFailure("session_busy")
-    trim_history(session, settings.max_session_turns)
-    return session
+    conversation.trim(settings.max_session_turns)
+    return conversation
 
 
 def _failed(record: JobRecord, code: str) -> JobRecord:

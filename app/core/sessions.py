@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
+from typing import Any
 
 from redis.asyncio import Redis
 from testatlasvision import Session
 
 from app.core.config import SharedSettings
+from app.core.schemas import TurnRecord
 
 LOCK_SLACK_SECONDS = 60
 
@@ -47,21 +50,63 @@ def running_lock_ttl(settings: SharedSettings) -> int:
     return settings.job_timeout + LOCK_SLACK_SECONDS
 
 
-async def create_session(redis: Redis, ttl: int) -> Session:
-    session = Session()
-    await redis.set(session_key(session.session_id), json.dumps(session.to_dict()), ex=ttl)
-    return session
+@dataclass
+class Conversation:
+    """The SDK's English Session plus, per turn, what the user actually asked and saw.
+
+    Stored as one JSON document: Session.to_dict() with an extra "turns" list kept
+    index-aligned with "history". Session.from_dict ignores the extra key.
+    """
+
+    session: Session = field(default_factory=Session)
+    turns: list[TurnRecord] = field(default_factory=list)
+
+    @property
+    def session_id(self) -> str:
+        return self.session.session_id
+
+    def add_turn(self, turn: TurnRecord) -> None:
+        self.turns.append(turn)
+
+    def trim(self, max_turns: int) -> None:
+        del self.session.history[:-max_turns]
+        del self.turns[:-max_turns]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.session.to_dict(), "turns": [t.model_dump() for t in self.turns]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Conversation:
+        session = Session.from_dict(data)
+        turns = [TurnRecord.model_validate(t) for t in data.get("turns", [])]
+        history = session.history
+        if len(turns) > len(history):
+            turns = turns[len(turns) - len(history) :]
+        # History without per-turn details (should not happen) falls back to English.
+        missing = [
+            TurnRecord(question=t.question, question_lang="en", lang="en", answer=t.answer)
+            for t in history[: len(history) - len(turns)]
+        ]
+        return cls(session=session, turns=missing + turns)
 
 
-async def load_session(redis: Redis, session_id: str) -> Session | None:
+async def create_session(redis: Redis, ttl: int) -> Conversation:
+    conversation = Conversation()
+    await redis.set(
+        session_key(conversation.session_id), json.dumps(conversation.to_dict()), ex=ttl
+    )
+    return conversation
+
+
+async def load_session(redis: Redis, session_id: str) -> Conversation | None:
     raw = await redis.get(session_key(session_id))
-    return None if raw is None else Session.from_dict(json.loads(raw))
+    return None if raw is None else Conversation.from_dict(json.loads(raw))
 
 
-async def save_session(redis: Redis, session: Session, ttl: int) -> bool:
+async def save_session(redis: Redis, conversation: Conversation, ttl: int) -> bool:
     """Write back only if the session still exists, so a deleted session stays deleted."""
-    payload = json.dumps(session.to_dict())
-    return bool(await redis.set(session_key(session.session_id), payload, ex=ttl, xx=True))
+    payload = json.dumps(conversation.to_dict())
+    return bool(await redis.set(session_key(conversation.session_id), payload, ex=ttl, xx=True))
 
 
 async def touch_session(redis: Redis, session_id: str, ttl: int) -> bool:
@@ -70,10 +115,6 @@ async def touch_session(redis: Redis, session_id: str, ttl: int) -> bool:
 
 async def delete_session(redis: Redis, session_id: str) -> bool:
     return bool(await redis.delete(session_key(session_id), lock_key(session_id)))
-
-
-def trim_history(session: Session, max_turns: int) -> None:
-    del session.history[:-max_turns]
 
 
 async def acquire_lock(redis: Redis, session_id: str, job_id: str, ttl: int) -> str | None:

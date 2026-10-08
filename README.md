@@ -38,7 +38,10 @@ Configuration is read from environment variables; `.env.example` documents each 
 `POST /v1/jobs/chat`. Without it, each job runs with no memory.
 
 - **Re-send the image with every question.** The model always needs an image; the session
-  only stores the conversation text (in English, as the SDK does).
+  only stores the conversation text.
+- `GET /v1/sessions/{id}` returns each turn as the user saw it (`question`, `question_lang`,
+  `lang`, `answer`) and as the model saw it (`english_question`, `english_answer`), so a
+  client can rebuild the conversation in the user's language.
 - **One question at a time per session.** While a job on a session is queued or running, a
   new job on the same session gets `409 session_busy` with the `job_id` still in progress.
   Clients should disable sending until that job is `done` or `failed`

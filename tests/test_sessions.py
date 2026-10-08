@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core.jobs import job_key, utcnow
 from app.core.schemas import ChatParams, JobRecord, JobStatus, WorkerState
-from app.core.sessions import lock_key, session_key
+from app.core.sessions import Conversation, lock_key, session_key
 from app.worker.fake_model import FakeAtlasVision
 from tests.conftest import (
     make_api_settings,
@@ -46,9 +46,14 @@ def history(sync_redis: redis.Redis, session_id: str) -> list[dict[str, str]]:
 
 
 def seed_history(sync_redis: redis.Redis, session_id: str, turns: int) -> None:
+    numbers = range(1, turns + 1)
     data = {
         "session_id": session_id,
-        "history": [{"question": f"q{i}", "answer": f"a{i}"} for i in range(1, turns + 1)],
+        "history": [{"question": f"q{i}", "answer": f"a{i}"} for i in numbers],
+        "turns": [
+            {"question": f"yo-q{i}", "question_lang": "yo", "lang": "yo", "answer": f"yo-a{i}"}
+            for i in numbers
+        ],
     }
     sync_redis.set(session_key(session_id), json.dumps(data))
 
@@ -223,6 +228,9 @@ def test_history_is_trimmed_before_each_call(
     assert len(stored) == 8
     assert stored[0]["question"] == "q4"
     assert stored[-1]["question"] == "Next?"
+    turns = client.get(f"/v1/sessions/{session_id}").json()["history"]
+    assert [t["question"] for t in turns] == [f"yo-q{i}" for i in range(4, 11)] + ["Next?"]
+    assert turns[0]["english_question"] == "q4"
 
 
 def test_failed_job_keeps_history_and_releases_lock(
@@ -238,6 +246,7 @@ def test_failed_job_keeps_history_and_releases_lock(
 
     assert poll(client, job_id)["error"]["code"] == "invalid_input"
     assert len(history(sync_redis, session_id)) == 2
+    assert len(client.get(f"/v1/sessions/{session_id}").json()["history"]) == 2
     assert sync_redis.exists(lock_key(session_id)) == 0
 
 
@@ -291,3 +300,61 @@ def test_session_deleted_while_job_runs(
     assert body["status"] == "done"
     assert body["result"]["answer"]
     assert sync_redis.exists(session_key(session_id), lock_key(session_id)) == 0
+
+
+def test_history_keeps_original_question_and_translated_answer(
+    client: TestClient, ready: None
+) -> None:
+    session_id = new_session(client)
+    submit_chat(client, session_id=session_id, question="Kini eyi?", lang="yo", question_lang="yo")
+    run_worker(make_worker_settings())
+    submit_chat(
+        client, session_id=session_id, question="What colour?", lang="ha", question_lang="en"
+    )
+    run_worker(make_worker_settings())
+
+    assert client.get(f"/v1/sessions/{session_id}").json()["history"] == [
+        {
+            "question": "Kini eyi?",
+            "question_lang": "yo",
+            "lang": "yo",
+            "answer": "[en->yo] Fake answer 1 about a 32x24 image: [yo->en] Kini eyi?",
+            "english_question": "[yo->en] Kini eyi?",
+            "english_answer": "Fake answer 1 about a 32x24 image: [yo->en] Kini eyi?",
+        },
+        {
+            "question": "What colour?",
+            "question_lang": "en",
+            "lang": "ha",
+            "answer": "[en->ha] Fake answer 2 about a 32x24 image: What colour?",
+            "english_question": "What colour?",
+            "english_answer": "Fake answer 2 about a 32x24 image: What colour?",
+        },
+    ]
+
+
+def _turn(i: int) -> dict[str, str]:
+    return {"question": f"t{i}", "question_lang": "ig", "lang": "ig", "answer": f"t{i}"}
+
+
+@pytest.mark.parametrize(
+    ("turns", "expected"),
+    [
+        ([_turn(3)], ["q1", "q2", "t3"]),
+        ([_turn(i) for i in range(5)], ["t2", "t3", "t4"]),
+    ],
+    ids=["fewer-turns-than-history", "more-turns-than-history"],
+)
+def test_conversation_realigns_turns_with_history(
+    turns: list[dict[str, str]], expected: list[str]
+) -> None:
+    data = {
+        "session_id": "s",
+        "history": [{"question": f"q{i}", "answer": f"a{i}"} for i in (1, 2, 3)],
+        "turns": turns,
+    }
+
+    conversation = Conversation.from_dict(data)
+
+    assert [t.question for t in conversation.turns] == expected
+    assert conversation.turns[0].lang == ("en" if expected[0] == "q1" else "ig")

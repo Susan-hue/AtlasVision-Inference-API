@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 from app.api.dependencies import get_redis, get_settings
 from app.api.errors import ApiError
 from app.core.config import ApiSettings
-from app.core.schemas import Turn
+from app.core.schemas import TurnView
 from app.core.sessions import (
     create_session,
     delete_session,
@@ -33,7 +33,7 @@ class SessionCreated(BaseModel):
 
 class SessionView(BaseModel):
     session_id: str
-    history: list[Turn]
+    history: list[TurnView]
     active_job_id: str | None
 
 
@@ -52,13 +52,19 @@ async def create(redis: RedisDep, settings: SettingsDep, response: Response) -> 
 
 @router.get("/{session_id}", response_model=SessionView)
 async def get(session_id: str, redis: RedisDep, settings: SettingsDep) -> SessionView:
-    session = await load_session(redis, valid_session_id(session_id))
-    if session is None:
+    conversation = await load_session(redis, valid_session_id(session_id))
+    if conversation is None:
         raise ApiError.from_code("session_not_found")
     await touch_session(redis, session_id, settings.session_ttl)
+    history = [
+        TurnView(
+            english_question=english.question, english_answer=english.answer, **turn.model_dump()
+        )
+        for english, turn in zip(conversation.session.history, conversation.turns, strict=True)
+    ]
     return SessionView(
-        session_id=session.session_id,
-        history=[Turn(question=t.question, answer=t.answer) for t in session.history],
+        session_id=session_id,
+        history=history,
         active_job_id=await lock_holder(redis, session_id),
     )
 
