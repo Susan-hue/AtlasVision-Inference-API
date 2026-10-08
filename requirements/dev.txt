@@ -7,6 +7,7 @@ annotated-doc==0.0.5
 annotated-types==0.8.0
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   pydantic
 anyio==4.15.1
     # via
@@ -14,9 +15,15 @@ anyio==4.15.1
     #   httpx
     #   starlette
     #   watchfiles
+arq==0.28.0
+    # via
+    #   -c requirements/api.txt
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 async-timeout==5.0.1
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   redis
 certifi==2026.7.22
     # via
@@ -25,6 +32,8 @@ certifi==2026.7.22
 click==8.5.0
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
+    #   arq
     #   uvicorn
 fastapi==0.143.0
     # via
@@ -38,6 +47,7 @@ h11==0.16.0
 hiredis==3.4.2
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   redis
 httpcore==1.0.9
     # via httpx
@@ -60,35 +70,49 @@ opentelemetry-api==1.45.1
     #   fastapi
 packaging==26.3
     # via pytest
+pillow==12.3.0
+    # via
+    #   -c requirements/api.txt
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 pluggy==1.6.0
     # via pytest
 pydantic==2.14.0
     # via
     #   -c requirements/api.txt
-    #   -r requirements/api.in
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
     #   fastapi
     #   pydantic-settings
 pydantic-core==2.50.0
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   pydantic
 pydantic-settings==2.15.0
     # via
     #   -c requirements/api.txt
-    #   -r requirements/api.in
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 pygments==2.21.0
     # via pytest
 pyjwt==2.15.1
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   redis
 pytest==9.1.1
     # via -r requirements/dev.in
 python-dotenv==1.2.4
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.32
+    # via
+    #   -c requirements/api.txt
+    #   -r requirements/api.in
 pyyaml==6.0.3
     # via
     #   -c requirements/api.txt
@@ -96,7 +120,9 @@ pyyaml==6.0.3
 redis==5.3.1
     # via
     #   -c requirements/api.txt
-    #   -r requirements/api.in
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
+    #   arq
 ruff==0.16.10
     # via -r requirements/dev.in
 starlette==1.7.0
@@ -106,6 +132,7 @@ starlette==1.7.0
 typing-extensions==4.16.0
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   anyio
     #   fastapi
     #   opentelemetry-api
@@ -116,6 +143,7 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
     # via
     #   -c requirements/api.txt
+    #   -c requirements/base.txt
     #   fastapi
     #   pydantic
     #   pydantic-settings

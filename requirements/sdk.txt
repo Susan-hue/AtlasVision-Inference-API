@@ -1,0 +1,2 @@
+# Install with --no-deps: the SDK declares torch, but the modules we import never load it.
+testatlasvision==0.1.0 --hash=sha256:92c753daac4bef74b6e5b397d46521162ae5edd60d8091f4be8135a9d0bcc075

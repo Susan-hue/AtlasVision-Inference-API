@@ -1,0 +1,6 @@
+pydantic>=2.14
+pydantic-settings>=2.15
+# arq requires redis<6.
+redis[hiredis]>=5.3,<6
+arq>=0.28
+pillow>=12.3

@@ -3,50 +3,81 @@
 annotated-doc==0.0.5
     # via fastapi
 annotated-types==0.8.0
-    # via pydantic
+    # via
+    #   -c requirements/base.txt
+    #   pydantic
 anyio==4.15.1
     # via
     #   starlette
     #   watchfiles
+arq==0.28.0
+    # via
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 async-timeout==5.0.1
-    # via redis
+    # via
+    #   -c requirements/base.txt
+    #   redis
 click==8.5.0
-    # via uvicorn
+    # via
+    #   -c requirements/base.txt
+    #   arq
+    #   uvicorn
 fastapi==0.143.0
     # via -r requirements/api.in
 h11==0.16.0
     # via uvicorn
 hiredis==3.4.2
-    # via redis
+    # via
+    #   -c requirements/base.txt
+    #   redis
 httptools==0.8.0
     # via uvicorn
 idna==3.20
     # via anyio
 opentelemetry-api==1.45.1
     # via fastapi
+pillow==12.3.0
+    # via
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 pydantic==2.14.0
     # via
-    #   -r requirements/api.in
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
     #   fastapi
     #   pydantic-settings
 pydantic-core==2.50.0
-    # via pydantic
+    # via
+    #   -c requirements/base.txt
+    #   pydantic
 pydantic-settings==2.15.0
-    # via -r requirements/api.in
+    # via
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
 pyjwt==2.15.1
-    # via redis
+    # via
+    #   -c requirements/base.txt
+    #   redis
 python-dotenv==1.2.4
     # via
+    #   -c requirements/base.txt
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.32
+    # via -r requirements/api.in
 pyyaml==6.0.3
     # via uvicorn
 redis==5.3.1
-    # via -r requirements/api.in
+    # via
+    #   -c requirements/base.txt
+    #   -r requirements/base.in
+    #   arq
 starlette==1.7.0
     # via fastapi
 typing-extensions==4.16.0
     # via
+    #   -c requirements/base.txt
     #   anyio
     #   fastapi
     #   opentelemetry-api
@@ -56,6 +87,7 @@ typing-extensions==4.16.0
     #   typing-inspection
 typing-inspection==0.4.4
     # via
+    #   -c requirements/base.txt
     #   fastapi
     #   pydantic
     #   pydantic-settings

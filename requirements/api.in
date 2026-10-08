@@ -1,6 +1,5 @@
+-c base.txt
+-r base.in
 fastapi>=0.143
 uvicorn[standard]>=0.54
-pydantic>=2.14
-pydantic-settings>=2.15
-# arq requires redis<6.
-redis[hiredis]>=5.3,<6
+python-multipart>=0.0.32
